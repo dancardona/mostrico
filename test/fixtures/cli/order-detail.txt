@@ -1,0 +1,9 @@
+order_id: 11111111-1111-4111-8111-111111111111
+kind: sell
+currency: COP
+min_amount: 50000
+max_amount: 150000
+sats: 100000
+premium: 1.5
+payment_methods: Nequi, Daviplata
+status: active

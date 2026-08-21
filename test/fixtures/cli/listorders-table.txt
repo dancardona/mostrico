@@ -1,0 +1,8 @@
+Checking for legacy token columns...
+No legacy token columns found - database is up to date
+│ Kind ┆ Order Id ┆ Status ┆ Amount ┆ Fiat ┆ Fiat Amt ┆ Payment Method ┆ Premium ┆ Created │
+│ sell ┆ aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa ┆ pending ┆ market ┆ COP ┆ 100000 ┆ NEQUI LLAVES ┆ 3 ┆ 2026-08-21 14:21 │
+│      ┆                                      ┆         ┆        ┆     ┆        ┆ BRE-B         ┆   ┆                  │
+│ sell ┆ bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb ┆ pending ┆ market ┆ COP ┆ 500000-2000000 ┆ Nequi,Llaves BRE-B ┆ 1 ┆ 2026-08-21 13:53 │
+│ sell ┆ cccccccc-cccc-4ccc-8ccc-cccccccccccc ┆ pending ┆ market ┆ COP ┆ 1000000-4000000 ┆ Lightning to Bitcoin ┆ 0 ┆ 2026-08-21 13:18 │
+│      ┆                                      ┆         ┆        ┆     ┆                 ┆ Contact first        ┆   ┆                  │
