@@ -30,14 +30,22 @@ function createSafeEnv(): NodeJS.ProcessEnv {
 export class SpawnMostroCliRunner implements MostroCliRunner {
   constructor(private executable = process.env.MOSTRO_CLI_PATH || "mostro-cli") {}
 
-  run(args: readonly string[], options: { timeoutMs?: number; preserveInvoices?: boolean } = {}): Promise<RunResult> {
+  run(args: readonly string[], options: {
+    timeoutMs?: number;
+    preserveInvoices?: boolean;
+    preservePeerPubkeys?: boolean;
+  } = {}): Promise<RunResult> {
     const task = () => this.runNow(args, options);
     const scheduled = queue.then(task, task);
     queue = scheduled.then(() => undefined, () => undefined);
     return scheduled;
   }
 
-  private runNow(args: readonly string[], options: { timeoutMs?: number; preserveInvoices?: boolean }): Promise<RunResult> {
+  private runNow(args: readonly string[], options: {
+    timeoutMs?: number;
+    preserveInvoices?: boolean;
+    preservePeerPubkeys?: boolean;
+  }): Promise<RunResult> {
     return new Promise((resolve, reject) => {
       const startedAt = Date.now();
       let stdout = "";
@@ -79,8 +87,14 @@ export class SpawnMostroCliRunner implements MostroCliRunner {
         settled = true;
         resolve({
           exitCode: exitCode ?? 1,
-          stdout: redactSensitive(stdout, { preserveInvoices: options.preserveInvoices }),
-          stderr: redactSensitive(stderr, { preserveInvoices: options.preserveInvoices }),
+          stdout: redactSensitive(stdout, {
+            preserveInvoices: options.preserveInvoices,
+            preservePeerPubkeys: options.preservePeerPubkeys
+          }),
+          stderr: redactSensitive(stderr, {
+            preserveInvoices: options.preserveInvoices,
+            preservePeerPubkeys: options.preservePeerPubkeys
+          }),
           durationMs: Date.now() - startedAt
         });
       });
@@ -104,13 +118,18 @@ class MockMostroCliRunner implements MostroCliRunner {
       ? "33333333-3333-4333-8333-333333333333"
       : "44444444-4444-4444-8444-444444444444";
     const stdoutByCommand: Record<string, string> = {
-      "--version": "mostro-cli 0.16.0\n",
+      "--version": "mostro-cli 0.16.1\n",
       listorders:
         "ID                                   Kind Currency Amount     Sats    Premium Payment methods Status\n" +
         "11111111-1111-4111-8111-111111111111 sell COP      50000-150000 100000  1.5     Nequi,Daviplata  active\n",
       ordersinfo:
         `order_id: ${orderId}\nkind: sell\ncurrency: COP\nmin_amount: 50000\nmax_amount: 150000\nsats: 100000\npremium: 1.5\npayment_methods: Nequi, Daviplata\nstatus: active\n`,
-      takesell: `Trade started for order ${orderId}. Add invoice if needed.\n`,
+      takesell:
+        `🪙 Anti-Abuse Bond Invoice\n` +
+        `📋 Order ID: ${orderId}\n` +
+        `⚡ LIGHTNING BOND INVOICE TO PAY:\n` +
+        `lnbc1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3qpp5qqqsyqcyq5rqwzqfka\n` +
+        `💡 Pay this hold invoice to lock your taker bond.\n`,
       neworder: kind === "sell"
         ? `Payment Invoice Received\nOrder ID: ${createdOrderId}\nLIGHTNING INVOICE TO PAY:\nlnbc1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3qpp5qqqsyqcyq5rqwzqfka\nOrder saved successfully!\n`
         : `New Order Created\nOrder ID: ${createdOrderId}\nKind: Buy\nStatus: Pending\nOrder saved successfully!\n`,
@@ -119,6 +138,15 @@ class MockMostroCliRunner implements MostroCliRunner {
       getdm:
         `2026-08-21T14:00:00Z ${orderId} mostro order taken\n` +
         `2026-08-21T14:01:00Z ${orderId} mostro sats locked; review seller payment instructions before sending fiat\n`,
+      getdmuser:
+        `📨 Fetch User Direct Messages\n` +
+        `📄 Message 1:\n` +
+        `─────────────────────────────────────\n` +
+        `⏰ Time: 2026-08-21 14:02:00\n` +
+        `📨 From: 👤 Counterparty (${"1".repeat(64)})\n` +
+        `📝 Content:\n` +
+        `   Hola, ya vi la operación.\n`,
+      senddm: "✅ Direct message sent successfully!\n",
       fiatsent: `Fiat sent marked for order ${orderId}.\n`,
       rate: `Rating submitted for order ${orderId}.\n`,
       dispute: `Dispute opened for order ${orderId}.\n`,

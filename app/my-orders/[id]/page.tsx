@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { Ban, CheckCircle2, RefreshCw, Send, Unlock } from "lucide-react";
 import { Button, Card, ErrorNotice, Notice, type ApiErrorData } from "@/components/ui";
+import { TradeChat } from "@/components/trade-chat";
 import { formatFiatAmount, formatFiatRange, formatNumber, formatPercentage } from "@/lib/format";
 import type { LocalTradeMetadata, TradeMessage } from "@/lib/mostro/types";
 
@@ -136,6 +137,8 @@ export default function MyOrderPage() {
               </div>
             </Card>
 
+            <TradeChat orderId={orderId} />
+
             {!closed && order.kind === "buy" && (
               <Card className="space-y-5">
                 <h2 className="flex items-center gap-2 font-semibold"><Send size={18} /> Confirmar pago fiat</h2>
@@ -191,6 +194,7 @@ function statusLabel(status: LocalTradeMetadata["lastKnownStep"]) {
   const labels: Record<LocalTradeMetadata["lastKnownStep"], string> = {
     maker_pending: "Pendiente",
     taken: "Tomada",
+    waiting_for_bond: "Esperando garantía",
     needs_invoice: "Requiere invoice",
     waiting_for_lock: "Esperando bloqueo",
     ready_for_fiat: "Lista para pago fiat",

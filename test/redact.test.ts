@@ -26,4 +26,21 @@ describe("redaction", () => {
     expect(output).toContain(invoice);
     expect(output).toContain("[redacted-hex-key]");
   });
+
+  it("can preserve an explicitly labeled peer key without preserving arbitrary hex secrets", () => {
+    const peer = "1".repeat(64);
+    const secret = "2".repeat(64);
+    const result = redactSensitive(`   👤 Peer: ${peer}\nTrade Keys: ${secret}`, { preservePeerPubkeys: true });
+
+    expect(result).toContain(`Peer: ${peer}`);
+    expect(result).not.toContain(secret);
+    expect(result).toContain("[redacted-hex-key]");
+  });
+
+  it("preserves a peer key when the CLI wraps its label in ANSI colors", () => {
+    const peer = "1".repeat(64);
+    const result = redactSensitive(`   \u001b[32m👤 Peer:\u001b[0m ${peer}\n`, { preservePeerPubkeys: true });
+
+    expect(result).toContain(peer);
+  });
 });

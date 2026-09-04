@@ -33,9 +33,17 @@ export interface TradeMessage {
   source: "mostro" | "counterparty" | "unknown";
 }
 
+export interface ChatMessage {
+  id: string;
+  direction: "incoming" | "outgoing";
+  text: string;
+  timestamp: string;
+}
+
 export type LocalTradeStep =
   | "maker_pending"
   | "taken"
+  | "waiting_for_bond"
   | "needs_invoice"
   | "waiting_for_lock"
   | "ready_for_fiat"
@@ -56,6 +64,8 @@ export interface LocalTradeMetadata {
   paymentMethods?: string[];
   premiumPct?: number;
   expirationDays?: number;
+  counterpartyPubkey?: string;
+  chatMessages?: ChatMessage[];
   lastKnownStep: LocalTradeStep;
 }
 
@@ -65,6 +75,21 @@ export interface CreatedOrderResult {
   paymentInvoice?: string;
   message: string;
   partial: boolean;
+}
+
+export interface TakeSellResult {
+  orderId: string;
+  message: string;
+  invoiceAdded: boolean;
+  bondInvoice?: string;
+  nextStep: "pay_bond" | "add_invoice" | "waiting_for_seller";
+}
+
+export interface TradeLifecycleStatus {
+  step: LocalTradeStep;
+  bondRequired: boolean;
+  bondInvoice?: string;
+  readyForInvoice: boolean;
 }
 
 export interface Diagnostics {
@@ -85,7 +110,11 @@ export interface RunResult {
 }
 
 export interface MostroCliRunner {
-  run(args: readonly string[], options?: { timeoutMs?: number; preserveInvoices?: boolean }): Promise<RunResult>;
+  run(args: readonly string[], options?: {
+    timeoutMs?: number;
+    preserveInvoices?: boolean;
+    preservePeerPubkeys?: boolean;
+  }): Promise<RunResult>;
 }
 
 export type AppErrorCode =

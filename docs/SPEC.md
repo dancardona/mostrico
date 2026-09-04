@@ -19,19 +19,14 @@ Browser (127.0.0.1)
         |
         v
 Next.js local server
+        +--> Safe CLI adapter --> mostro-cli --> Nostr relays / Mostro instance
         |
-        v
-Safe CLI adapter
-        |
-        v
-mostro-cli
-        |
-        +--> Nostr relays / Mostro instance
-        |
-        +--> ~/.mcli/mcli.db (owned by mostro-cli only)
+        +--> Chat adapter --> Nostr relays
+                    |
+                    +--> ~/.mcli/mcli.db (read-only, one order trade key)
 ```
 
-The web application MUST NOT open or parse `~/.mcli/mcli.db`.
+Only the server-side chat adapter may open `~/.mcli/mcli.db`, in read-only mode, to load the trade key for the validated order ID. No database content or derived private key may cross the API boundary or be logged.
 
 ---
 
@@ -47,11 +42,13 @@ The web application MUST NOT open or parse `~/.mcli/mcli.db`.
 - Fixed and range order support
 - Provide Lightning invoice during take
 - Add Lightning invoice after take
+- Detect and display an anti-abuse bond hold invoice before continuing
 - Fetch Mostro DMs
 - Buyer trade timeline
 - Mark fiat as sent
 - Rate seller
 - Open dispute
+- Encrypted peer chat using the current Mostro kind-14 protocol, with legacy read compatibility
 - Create buy and sell maker orders
 - Fixed or ranged fiat amounts and market or fixed-sats pricing
 - Show a returned sell hold invoice once, without paying or persisting it
@@ -70,7 +67,7 @@ The web application MUST NOT open or parse `~/.mcli/mcli.db`.
 - Admin/solver commands
 - `ADMIN_NSEC`
 - Mnemonic display/import/export
-- Reading/writing `~/.mcli/mcli.db`
+- Writing `~/.mcli/mcli.db`, or reading it outside the narrow server-side chat-key lookup
 - Remote multi-user hosting
 - User accounts/passwords
 - Cloud database
@@ -156,6 +153,7 @@ mostro-web/
 │     ├─ trades/take-sell/route.ts
 │     ├─ trades/add-invoice/route.ts
 │     ├─ trades/[id]/messages/route.ts
+│     ├─ trades/[id]/chat/route.ts
 │     ├─ trades/[id]/fiat-sent/route.ts
 │     ├─ trades/[id]/rate/route.ts
 │     └─ trades/[id]/dispute/route.ts
@@ -367,8 +365,16 @@ interface TradeMessage {
   source: "mostro" | "counterparty" | "unknown";
 }
 
+interface ChatMessage {
+  id: string;
+  direction: "incoming" | "outgoing";
+  text: string;
+  timestamp: string;
+}
+
 type LocalTradeStep =
   | "taken"
+  | "waiting_for_bond"
   | "needs_invoice"
   | "waiting_for_lock"
   | "ready_for_fiat"
@@ -470,6 +476,8 @@ Uses `ordersinfo`.
 
 `fiatAmount` and invoice may be optional depending on fixed/range/deferred-invoice flow. `confirmed` is mandatory.
 
+If Mostro responds with `PayBondInvoice`, return the bond invoice only to the initiating browser session, set the local step to `waiting_for_bond`, and do not call `addinvoice` yet. Never persist the full invoice. Once Mostro emits `AddInvoice`, allow the buyer to submit the payout invoice.
+
 ### `POST /api/trades/add-invoice`
 
 ```json
@@ -484,6 +492,14 @@ Uses `ordersinfo`.
 Runs `getdm` and safely associates messages.
 
 **Critical:** if `getdm` returns messages for multiple trades and reliable order association is unavailable, never attach bank/payment instructions from another order to the current trade. Return ambiguous messages separately or require manual review.
+
+### `/api/trades/:id/chat`
+
+- `GET ?since=60` reads current Mostro kind-14 chat envelopes from the configured relays and also runs `getdmuser` for legacy history, only when the local operation has a validated counterparty pubkey. Initial history is capped at seven days and 100 relay events.
+- `PUT` accepts `{ "pubkey": "...", "confirmed": true }` as a fallback when the CLI has not disclosed the peer. A pubkey cannot be replaced after an outgoing message has been recorded.
+- `POST` accepts `{ "message": "..." }` and publishes the current Mostro chat envelope (ECDH + HKDF-separated `K_conv`/`K_sign`, NIP-44, signed kind 14) against the pubkey stored server-side. After relay acceptance, make the same best-effort `POST /api/notify` wake-up used by Mostro Mobile. Push failure must not turn accepted relay publication into a failed chat send. The browser cannot select a recipient during send.
+
+Chat messages are limited to 1000 characters and rendered as plain text, never Markdown or HTML. Store at most 200 messages per operation. The server opens the CLI database read-only for the requested order; trade secrets never enter API responses or logs. Incoming envelopes are checked for author, exact `p` tag, clock skew, size, outer and inner signatures, allowed signer, kind, and duplicate inner event id before display.
 
 ### `POST /api/trades/:id/fiat-sent`
 
@@ -601,17 +617,18 @@ Display:
 - manual refresh
 - polling every ~15 seconds while tab visible
 - add invoice action if needed
+- anti-abuse bond invoice, wallet deep link, and explicit payment acknowledgement when required
 - fiat sent action
 - dispute
 - rating when appropriate
 
 Suggested timeline:
 1. Oferta tomada
-2. Invoice Lightning agregada
-3. Operación lista / sats asegurados — only if confirmed by Mostro output
-4. Pago fiat
-5. Esperando liberación
-6. Operación completada
+2. Garantía anti-abuso — only when requested by Mostro
+3. Invoice Lightning agregada
+4. Operación lista / sats asegurados — only if confirmed by Mostro output
+5. Pago fiat
+6. Liberación y cierre
 
 If readiness cannot be determined safely:
 > Revisa los mensajes de Mostro antes de transferir fiat.
@@ -700,6 +717,7 @@ Use a server-side queue/mutex.
 
 - market refresh: manual + optional 30 s
 - trade messages: 15 s while tab visible
+- counterpart chat: 30 s while tab visible
 - pause polling when hidden
 - allow manual refresh
 
@@ -859,7 +877,6 @@ Spanish first, but keep strings structured so i18n can be added later.
 
 - taking public buy orders as a seller
 - richer maker-order status synchronization
-- direct user chat (`senddm`, `getdmuser`)
 - Mostro community/instance discovery
 - Lightning Address
 - wallet integration

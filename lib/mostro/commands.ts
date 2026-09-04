@@ -3,7 +3,10 @@ import {
   amountSchema,
   currencySchema,
   newOrderInputSchema,
+  nostrPubkeySchema,
   ratingSchema,
+  chatMessageSchema,
+  chatSinceSchema,
   sinceSchema,
   takeSellInputSchema,
   uuidSchema
@@ -81,6 +84,38 @@ export function getDmCommand(sinceMinutes: number): CommandSpec {
     args: ["getdm", "--since", since],
     timeoutMs: 45_000,
     mutating: false
+  };
+}
+
+export function getDmUserCommand(input: {
+  orderId: string;
+  pubkey: string;
+  since: number;
+}): CommandSpec {
+  const orderId = uuidSchema.parse(input.orderId);
+  const pubkey = nostrPubkeySchema.parse(input.pubkey);
+  const since = String(chatSinceSchema.parse(input.since));
+  return {
+    action: "getdmuser",
+    args: ["getdmuser", "-p", pubkey, "-o", orderId, "--since", since],
+    timeoutMs: 45_000,
+    mutating: false
+  };
+}
+
+export function sendDmCommand(input: {
+  orderId: string;
+  pubkey: string;
+  message: string;
+}): CommandSpec {
+  const orderId = uuidSchema.parse(input.orderId);
+  const pubkey = nostrPubkeySchema.parse(input.pubkey);
+  const message = chatMessageSchema.parse(input.message);
+  return {
+    action: "senddm",
+    args: ["senddm", "-p", pubkey, "-o", orderId, "-m", message],
+    timeoutMs: 45_000,
+    mutating: true
   };
 }
 

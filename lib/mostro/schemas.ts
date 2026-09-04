@@ -71,6 +71,27 @@ export const mostroPubkeySchema = z
     message: "MOSTRO_PUBKEY debe ser npub o hex de 64 caracteres"
   });
 
+export const nostrPubkeySchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .refine(
+    (value) => /^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$/.test(value) || /^[0-9a-f]{64}$/.test(value),
+    "La pubkey debe ser un npub válido o una clave hex de 64 caracteres"
+  );
+
+export const chatMessageSchema = z
+  .string()
+  .trim()
+  .min(1, "Escribe un mensaje")
+  .max(1000, "El mensaje no puede superar 1000 caracteres")
+  .refine(
+    (value) => !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value),
+    "El mensaje contiene caracteres no permitidos"
+  );
+
+export const chatSinceSchema = z.coerce.number().int().min(1).max(10_080).default(60);
+
 export const invoiceSchema = z
   .string()
   .trim()

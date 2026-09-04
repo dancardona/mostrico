@@ -69,7 +69,8 @@ export default function OrderPage() {
       return;
     }
     const invoiceStatus = body.data.invoiceAdded ? "added" : "pending";
-    router.push(`/trades/${orderId}?invoice=${invoiceStatus}`);
+    const bondStatus = body.data.nextStep === "pay_bond" ? "pending" : "none";
+    router.push(`/trades/${orderId}?bond=${bondStatus}&invoice=${invoiceStatus}`);
   }
 
   async function syncTradeIndex() {

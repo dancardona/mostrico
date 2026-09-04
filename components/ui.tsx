@@ -1,5 +1,6 @@
 import { clsx } from "clsx";
 import { AlertTriangle } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { formatAmountInput } from "@/lib/format";
 
 export interface ApiErrorData {
@@ -76,6 +77,22 @@ export function Notice({ children, className, tone = "neutral", ...props }: Noti
     <div className={clsx("rounded border p-4 text-sm leading-6 sm:px-5 sm:py-4", styles[tone], className)} {...props}>
       {children}
     </div>
+  );
+}
+
+export function MarkdownText({ children }: { children: string }) {
+  return (
+    <ReactMarkdown
+      components={{
+        p: ({ children: content }) => <p className="mt-2 first:mt-0">{content}</p>,
+        strong: ({ children: content }) => <strong className="font-semibold text-ink">{content}</strong>,
+        ul: ({ children: content }) => <ul className="mt-2 list-disc space-y-1 pl-5">{content}</ul>,
+        ol: ({ children: content }) => <ol className="mt-2 list-decimal space-y-1 pl-5">{content}</ol>,
+        code: ({ children: content }) => <code className="rounded bg-raised px-1 py-0.5 font-mono text-[0.9em]">{content}</code>
+      }}
+    >
+      {children}
+    </ReactMarkdown>
   );
 }
 

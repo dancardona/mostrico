@@ -44,7 +44,7 @@ Run only on `127.0.0.1` by default.
 ## Critical security requirements
 
 1. Never expose mnemonic/private keys/`nsec`/contents of `~/.mcli/mcli.db` to the browser.
-2. Do not read the CLI database in the MVP.
+2. Only the server-side chat adapter may read the validated order's `trade_keys` field from the CLI database, opened read-only. Never log or return that value.
 3. Never use `exec`, `eval`, `shell: true`, string-concatenated shell commands, or user-provided command names.
 4. Invoke the binary with `spawn`/`execFile` and a fixed executable + explicit argument array.
 5. Maintain an explicit allowlist of supported Mostro actions.
@@ -119,17 +119,18 @@ Be explicit:
 3. Market lists COP sell orders through the actual CLI.
 4. Order detail works.
 5. User can take fixed/range sell orders with or without invoice.
-6. User can add invoice later.
-7. Trade view refreshes Mostro DMs.
-8. `fiatsent` has a strong confirmation guard.
-9. Rating and dispute work.
-10. No shell injection path exists.
-11. No private key/mnemonic/database content is sent to frontend.
-12. Unit tests cover command construction + parser fixtures.
-13. Playwright covers buyer wizard with mocked CLI adapter.
-14. README contains setup and security notes.
-15. `.env.example` contains no secrets.
-16. User can publish buy and sell maker orders with explicit confirmation.
-17. Sell hold invoices are shown once, never paid or persisted by the app.
+6. If Mostro requests `PayBondInvoice`, the UI shows the anti-abuse hold invoice and waits before allowing the payout invoice.
+7. User can add invoice later.
+8. Trade view refreshes Mostro DMs.
+9. `fiatsent` has a strong confirmation guard.
+10. Rating and dispute work.
+11. No shell injection path exists.
+12. No private key/mnemonic/database content is sent to frontend.
+13. Unit tests cover command construction + parser fixtures.
+14. Playwright covers buyer wizard with mocked CLI adapter.
+15. README contains setup and security notes.
+16. `.env.example` contains no secrets.
+17. User can publish buy and sell maker orders with explicit confirmation.
+18. Sell and anti-abuse hold invoices are shown without ever being paid or persisted by the app.
 
 Start by implementing the CLI adapter, validation, tests and diagnostics before building the main UI.

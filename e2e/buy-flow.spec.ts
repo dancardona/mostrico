@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("buyer can take a COP sell order and guard fiat sent", async ({ page }) => {
   await page.goto("/setup");
-  await expect(page.getByText("mostro-cli 0.16.0")).toBeVisible();
+  await expect(page.getByText("mostro-cli 0.16.1")).toBeVisible();
 
   await page.goto("/market");
   await expect(page.getByRole("heading", { name: "Comprar Bitcoin" })).toBeVisible();
@@ -14,23 +14,38 @@ test("buyer can take a COP sell order and guard fiat sent", async ({ page }) => 
   await page.getByPlaceholder("lnbc...").fill("lnbc1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3qpp5qqqsyqcyq5rqwzqfka");
   await page.getByLabel("Confirmo que quiero tomar esta oferta como comprador.").check();
   await page.getByRole("button", { name: /Tomar oferta/ }).click();
-  await page.waitForURL("**/trades/11111111-1111-4111-8111-111111111111?invoice=added", { timeout: 15_000 });
+  await page.waitForURL("**/trades/11111111-1111-4111-8111-111111111111?bond=pending&invoice=pending", { timeout: 15_000 });
 
   await expect(page.getByRole("heading", { name: "Operación" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Garantía anti-abuso" })).toBeVisible();
+  await expect(page.getByLabel("Invoice de garantía anti-abuso")).toHaveValue(/^lnbc/);
+  await expect(page.getByText(/Paga primero la garantía/)).toBeVisible();
+  await page.getByLabel(/Confirmo que pagué o inicié el pago/).check();
+  await page.getByPlaceholder("lnbc...").fill("lnbc1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3qpp5qqqsyqcyq5rqwzqfka");
+  await page.getByRole("button", { name: "Agregar invoice" }).click();
   await expect(page.getByText("Invoice Lightning agregada", { exact: true }).last()).toBeVisible();
   await expect(page.getByRole("button", { name: "Agregar invoice" })).toHaveCount(0);
+
+  await page.getByPlaceholder("npub1... o 64 caracteres hex").fill("1".repeat(64));
+  await page.getByRole("button", { name: "Guardar contraparte" }).click();
+  await expect(page.getByText("Hola, ya vi la operación.")).toBeVisible();
+  await page.getByPlaceholder("Escribe un mensaje").fill("Hola, ya inicié el pago");
+  await page.getByRole("button", { name: "Enviar", exact: true }).click();
+  await expect(page.getByText("Hola, ya inicié el pago")).toBeVisible();
+
   const fiatButton = page.getByRole("button", { name: "Marcar fiat como enviado" });
   await expect(fiatButton).toBeDisabled();
   await page.getByLabel("Confirmo que ya envié el pago fiat.").check();
   await expect(fiatButton).toBeEnabled();
   await fiatButton.click();
-  await expect(page.getByText(/Fiat sent marked/)).toBeVisible();
+  await expect(page.getByText("Pago fiat notificado", { exact: true })).toBeVisible();
 
+  await page.getByRole("radio", { name: "5 estrellas" }).click();
   await Promise.all([
     page.waitForResponse((response) => response.url().includes(`/api/trades/11111111-1111-4111-8111-111111111111/rate`) && response.request().method() === "POST"),
     page.getByRole("button", { name: "Enviar calificación" }).click()
   ]);
-  await expect(page.getByText(/Rating submitted/)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("Calificación enviada", { exact: true })).toBeVisible({ timeout: 15_000 });
 });
 
 test("formats an invalid trade index and offers explicit synchronization", async ({ page }) => {
@@ -69,6 +84,22 @@ test("formats an invalid trade index and offers explicit synchronization", async
 });
 
 test("formats an invoice rejected by the current order status", async ({ page }) => {
+  let messageRequests = 0;
+  await page.route("**/api/trades/11111111-1111-4111-8111-111111111111/messages**", async (route) => {
+    messageRequests += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        data: {
+          messages: [],
+          ambiguousMessages: [],
+          lifecycle: { step: "needs_invoice", bondRequired: false, readyForInvoice: true }
+        }
+      })
+    });
+  });
   await page.route("**/api/trades/add-invoice", async (route) => {
     await route.fulfill({
       status: 409,
@@ -95,6 +126,10 @@ test("formats an invoice rejected by the current order status", async ({ page })
   await expect(page.getByText("Acción no disponible", { exact: true })).toBeVisible();
   await expect(page.getByText(/estado actual de la orden/)).toBeVisible();
   await expect(page.getByText(/Actualiza los mensajes/)).toBeVisible();
+  await expect.poll(() => messageRequests).toBeGreaterThanOrEqual(2);
+  await page.getByRole("button", { name: "Actualizar estado" }).click();
+  await expect(page.getByText("Acción no disponible", { exact: true })).toHaveCount(0);
+  await expect.poll(() => messageRequests).toBeGreaterThanOrEqual(3);
   await expect(page.getByText(/Add Lightning Invoice|NotAllowedByStatus|legacy token columns/)).toHaveCount(0);
 });
 

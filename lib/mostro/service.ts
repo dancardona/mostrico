@@ -4,6 +4,7 @@ import {
   disputeCommand,
   fiatSentCommand,
   getDmCommand,
+  getDmUserCommand,
   listOrdersCommand,
   newOrderCommand,
   orderInfoCommand,
@@ -12,16 +13,40 @@ import {
   syncTradeIndexCommand,
   takeSellCommand
 } from "./commands";
-import { parseNewOrderResult, parseOrderDetail, parseOrders, parseTradeMessages, commandSucceeded } from "./parsers";
-import { mostroPubkeySchema, relayListSchema, type NewOrderInput } from "./schemas";
+import {
+  commandSucceeded,
+  parseCliTradeEvents,
+  parseChatMessages,
+  parseNewOrderResult,
+  parseOrderDetail,
+  parseOrders,
+  parsePeerDisclosures,
+  parseTakeSellResult,
+  parseTradeMessages
+} from "./parsers";
+import { chatMessageSchema, mostroPubkeySchema, nostrPubkeySchema, relayListSchema, type NewOrderInput } from "./schemas";
 import { getRunner } from "./runner";
-import { AppError, type CreatedOrderResult, Diagnostics, MostroCliRunner } from "./types";
-import { getTrade, upsertTrade } from "@/lib/store/local-state";
+import { AppError, type CreatedOrderResult, Diagnostics, MostroCliRunner, type TakeSellResult } from "./types";
+import { appendChatMessage, getTrade, mergeChatMessages, upsertTrade } from "@/lib/store/local-state";
 import { cacheOrders, getCachedOrder } from "./order-cache";
 import { parseCliError } from "./cli-error";
+import { redactSensitive } from "./redact";
+import { cacheBondInvoice, clearCachedBondInvoice, getCachedBondInvoice } from "./bond-cache";
+import { getChatTransport, type ChatTransport } from "./chat-transport";
+
+const bondEventMatchWindowMs = 2 * 60_000;
+
+function cliTimestampMs(value?: string) {
+  if (!value) return undefined;
+  const parsed = Date.parse(`${value.replace(" ", "T")}Z`);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
 
 export class MostroService {
-  constructor(private runner: MostroCliRunner = getRunner()) {}
+  constructor(
+    private runner: MostroCliRunner = getRunner(),
+    private chatTransport: ChatTransport = getChatTransport()
+  ) {}
 
   async diagnostics(): Promise<Diagnostics> {
     const warnings: string[] = [];
@@ -40,7 +65,9 @@ export class MostroService {
         this.runner.run(["neworder", "--help"], { timeoutMs: 10_000 }),
         this.runner.run(["ordersinfo", "--help"], { timeoutMs: 10_000 }),
         this.runner.run(["takesell", "--help"], { timeoutMs: 10_000 }),
-        this.runner.run(["getdm", "--help"], { timeoutMs: 10_000 })
+        this.runner.run(["getdm", "--help"], { timeoutMs: 10_000 }),
+        this.runner.run(["getdmuser", "--help"], { timeoutMs: 10_000 }),
+        this.runner.run(["senddm", "--help"], { timeoutMs: 10_000 })
       ]);
       const supported = version.exitCode === 0 && helpChecks.every((result) => result.exitCode === 0);
       return {
@@ -148,19 +175,54 @@ export class MostroService {
     return { orderId, ...trade };
   }
 
-  async takeSell(input: { orderId: string; fiatAmount?: string; invoice?: string; confirmed: true }) {
+  async takeSell(input: { orderId: string; fiatAmount?: string; invoice?: string; confirmed: true }): Promise<TakeSellResult> {
     this.ensureConfigured();
+    const makerPubkey = getCachedOrder(input.orderId)?.makerPubkey;
+    const parsedMakerPubkey = nostrPubkeySchema.safeParse(makerPubkey);
+    const counterpartyPubkey = parsedMakerPubkey.success ? parsedMakerPubkey.data : undefined;
     const command = takeSellCommand({
       orderId: input.orderId,
       fiatAmount: input.fiatAmount,
       confirmed: input.confirmed
     });
-    const result = await this.runner.run(command.args, { timeoutMs: command.timeoutMs });
-    this.ensureExitOk(result.exitCode, this.resultOutput(result));
+    const result = await this.runner.run(command.args, {
+      timeoutMs: command.timeoutMs,
+      preserveInvoices: true
+    });
+    const output = this.resultOutput(result);
+    this.ensureExitOk(result.exitCode, output);
+    const { bondInvoice } = parseTakeSellResult(output);
+
+    if (bondInvoice) {
+      cacheBondInvoice(input.orderId, bondInvoice);
+      try {
+        await upsertTrade(input.orderId, {
+          currency: "COP",
+          role: "taker",
+          kind: "sell",
+          selectedFiatAmount: input.fiatAmount,
+          counterpartyPubkey,
+          lastKnownStep: "waiting_for_bond"
+        });
+      } catch {
+        // The bond request is already remote state; return it even if local persistence fails.
+      }
+      return {
+        message: "Mostro requiere una garantía anti-abuso antes de continuar.",
+        orderId: input.orderId,
+        invoiceAdded: false,
+        bondInvoice,
+        nextStep: "pay_bond"
+      };
+    }
+
     try {
       await upsertTrade(input.orderId, {
         currency: "COP",
+        role: "taker",
+        kind: "sell",
         selectedFiatAmount: input.fiatAmount,
+        counterpartyPubkey,
         lastKnownStep: "needs_invoice"
       });
     } catch {
@@ -171,7 +233,8 @@ export class MostroService {
       return {
         message: "Oferta tomada. Agrega una invoice Lightning para continuar.",
         orderId: input.orderId,
-        invoiceAdded: false
+        invoiceAdded: false,
+        nextStep: "add_invoice"
       };
     }
 
@@ -187,13 +250,15 @@ export class MostroService {
       return {
         message: "Oferta tomada e invoice Lightning agregada.",
         orderId: input.orderId,
-        invoiceAdded: true
+        invoiceAdded: true,
+        nextStep: "waiting_for_seller"
       };
     } catch {
       return {
         message: "La oferta fue tomada, pero la invoice no pudo agregarse. Agrégala de nuevo desde la operación.",
         orderId: input.orderId,
-        invoiceAdded: false
+        invoiceAdded: false,
+        nextStep: "add_invoice"
       };
     }
   }
@@ -204,7 +269,11 @@ export class MostroService {
     const result = await this.runner.run(command.args, { timeoutMs: command.timeoutMs });
     this.ensureExitOk(result.exitCode, this.resultOutput(result));
     await upsertTrade(input.orderId, { lastKnownStep: "waiting_for_lock" });
-    return { message: commandSucceeded(result.stdout), orderId: input.orderId };
+    clearCachedBondInvoice(input.orderId);
+    return {
+      message: commandSucceeded(result.stdout, "**Invoice enviada**\n\nMostro recibió la solicitud. Actualiza la operación para confirmar el siguiente paso."),
+      orderId: input.orderId
+    };
   }
 
   async syncTradeIndex() {
@@ -218,18 +287,161 @@ export class MostroService {
   async messages(orderId: string, since = 30) {
     this.ensureConfigured();
     const command = getDmCommand(since);
-    const result = await this.runner.run(command.args, { timeoutMs: command.timeoutMs });
-    this.ensureExitOk(result.exitCode, this.resultOutput(result));
-    return parseTradeMessages(result.stdout, orderId);
+    const result = await this.runner.run(command.args, {
+      timeoutMs: command.timeoutMs,
+      preserveInvoices: true,
+      preservePeerPubkeys: true
+    });
+    const output = this.resultOutput(result);
+    this.ensureExitOk(result.exitCode, output);
+
+    const trade = await getTrade(orderId);
+    const createdAt = trade ? Date.parse(trade.createdAt) : Number.NaN;
+    const events = parseCliTradeEvents(output);
+    const disclosedPeer = parsePeerDisclosures(output).find((peer) => peer.orderId === orderId)?.pubkey;
+    const validatedPeer = nostrPubkeySchema.safeParse(disclosedPeer);
+    if (trade && !trade.counterpartyPubkey && validatedPeer.success) {
+      await upsertTrade(orderId, { counterpartyPubkey: validatedPeer.data });
+    }
+    const exactEvents = events.filter((event) => event.orderId === orderId);
+    const readyForInvoice = exactEvents.some((event) => event.action === "AddInvoice");
+    const bondEvent = events
+      .filter((event) => event.action === "PayBondInvoice" && event.invoice)
+      .map((event) => ({ event, timestamp: cliTimestampMs(event.timestamp) }))
+      .filter(({ event, timestamp }) => event.orderId === orderId || (
+        trade && timestamp !== undefined && Number.isFinite(createdAt) && Math.abs(timestamp - createdAt) <= bondEventMatchWindowMs
+      ))
+      .sort((left, right) => Math.abs((left.timestamp ?? 0) - createdAt) - Math.abs((right.timestamp ?? 0) - createdAt))[0]?.event;
+    const bondInvoice = bondEvent?.invoice ?? getCachedBondInvoice(orderId);
+
+    let step = trade?.lastKnownStep ?? "unknown";
+    if (bondEvent && !["waiting_for_lock", "ready_for_fiat", "fiat_marked_sent", "waiting_release", "completed", "canceled", "disputed"].includes(step)) {
+      step = "waiting_for_bond";
+    }
+    if (readyForInvoice && step === "waiting_for_bond") step = "needs_invoice";
+    if (trade && step !== trade.lastKnownStep) {
+      await upsertTrade(orderId, { lastKnownStep: step });
+    }
+
+    return {
+      ...parseTradeMessages(redactSensitive(output), orderId),
+      lifecycle: {
+        step,
+        bondRequired: Boolean(bondInvoice) || trade?.lastKnownStep === "waiting_for_bond",
+        bondInvoice,
+        readyForInvoice
+      }
+    };
   }
 
   async fiatSent(orderId: string) {
     this.ensureConfigured();
     const command = fiatSentCommand(orderId);
-    const result = await this.runner.run(command.args, { timeoutMs: command.timeoutMs });
+    const result = await this.runner.run(command.args, {
+      timeoutMs: command.timeoutMs,
+      preservePeerPubkeys: true
+    });
     this.ensureExitOk(result.exitCode, this.resultOutput(result));
-    await upsertTrade(orderId, { lastKnownStep: "fiat_marked_sent" });
-    return { message: commandSucceeded(result.stdout), orderId };
+    const disclosedPeer = parsePeerDisclosures(this.resultOutput(result)).find((peer) => peer.orderId === orderId)?.pubkey;
+    const validatedPeer = nostrPubkeySchema.safeParse(disclosedPeer);
+    await upsertTrade(orderId, {
+      lastKnownStep: "fiat_marked_sent",
+      counterpartyPubkey: validatedPeer.success ? validatedPeer.data : undefined
+    });
+    return { message: commandSucceeded(result.stdout, "**Acción enviada**\n\nMostro recibió la confirmación del pago fiat."), orderId };
+  }
+
+  async configureChat(orderId: string, pubkey: string) {
+    const trade = await this.requireLocalTrade(orderId);
+    const parsedPubkey = nostrPubkeySchema.parse(pubkey);
+    if (trade.counterpartyPubkey && trade.counterpartyPubkey !== parsedPubkey && (trade.chatMessages?.length ?? 0) > 0) {
+      throw new AppError(
+        "ACTION_NOT_ALLOWED",
+        "Esta operación ya tiene mensajes enviados a otra contraparte.",
+        { title: "Contraparte protegida", hint: "No se reemplazó la pubkey para evitar mezclar conversaciones entre operaciones." }
+      );
+    }
+    await upsertTrade(orderId, { counterpartyPubkey: parsedPubkey });
+    return { ready: true, counterpartyPubkey: parsedPubkey };
+  }
+
+  async chat(orderId: string, since = 60) {
+    const trade = await this.requireLocalTrade(orderId);
+    const outgoing = trade.chatMessages ?? [];
+    if (!trade.counterpartyPubkey) {
+      return { ready: false, counterpartyPubkey: undefined, messages: outgoing };
+    }
+
+    this.ensureConfigured();
+    const relays = relayListSchema.parse(process.env.RELAYS ?? "");
+    const command = getDmUserCommand({ orderId, pubkey: trade.counterpartyPubkey, since });
+    let nativeIncoming = [] as Awaited<ReturnType<ChatTransport["receive"]>>;
+    let nativeError: unknown;
+    try {
+      nativeIncoming = await this.chatTransport.receive({
+        orderId,
+        peerPubkey: trade.counterpartyPubkey,
+        relays,
+        since
+      });
+    } catch (error) {
+      nativeError = error;
+    }
+
+    let legacyIncoming = [] as Awaited<ReturnType<ChatTransport["receive"]>>;
+    let legacyError: unknown;
+    const hasCurrentProtocolHistory = outgoing.some((message) => message.id.startsWith("chat-"));
+    if (!hasCurrentProtocolHistory && nativeIncoming.length === 0) {
+      try {
+        const result = await this.runner.run(command.args, { timeoutMs: command.timeoutMs });
+        this.ensureExitOk(result.exitCode, this.resultOutput(result));
+        legacyIncoming = parseChatMessages(result.stdout);
+      } catch (error) {
+        legacyError = error;
+      }
+    }
+    if (nativeError && legacyError) {
+      throw nativeError;
+    }
+    const incoming = [
+      ...nativeIncoming,
+      ...legacyIncoming
+    ];
+    const persisted = incoming.length > 0
+      ? await mergeChatMessages(orderId, incoming)
+      : outgoing;
+    const messages = persisted
+      .filter((message, index, all) => all.findIndex((candidate) => candidate.id === message.id) === index)
+      .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+    return { ready: true, counterpartyPubkey: trade.counterpartyPubkey, messages };
+  }
+
+  async sendChatMessage(orderId: string, message: string) {
+    this.ensureConfigured();
+    const trade = await this.requireLocalTrade(orderId);
+    if (!trade.counterpartyPubkey) {
+      throw new AppError(
+        "ACTION_NOT_ALLOWED",
+        "Todavía no conocemos la pubkey de la contraparte.",
+        { title: "Chat no disponible", hint: "Actualiza la operación o configura la pubkey de intercambio de la contraparte." }
+      );
+    }
+
+    const cleanMessage = chatMessageSchema.parse(message);
+    const relays = relayListSchema.parse(process.env.RELAYS ?? "");
+    const sentMessage = await this.chatTransport.send({
+      orderId,
+      peerPubkey: trade.counterpartyPubkey,
+      relays,
+      message: cleanMessage
+    });
+
+    try {
+      await appendChatMessage(orderId, sentMessage);
+    } catch {
+      return { message: sentMessage, persisted: false };
+    }
+    return { message: sentMessage, persisted: true };
   }
 
   async rate(orderId: string, rating: number) {
@@ -237,7 +449,7 @@ export class MostroService {
     const command = rateCommand(orderId, rating);
     const result = await this.runner.run(command.args, { timeoutMs: command.timeoutMs });
     this.ensureExitOk(result.exitCode, this.resultOutput(result));
-    return { message: commandSucceeded(result.stdout), orderId };
+    return { message: commandSucceeded(result.stdout, "**Calificación enviada**\n\nMostro recibió tu calificación."), orderId };
   }
 
   async dispute(orderId: string) {
@@ -246,7 +458,7 @@ export class MostroService {
     const result = await this.runner.run(command.args, { timeoutMs: command.timeoutMs });
     this.ensureExitOk(result.exitCode, this.resultOutput(result));
     await upsertTrade(orderId, { lastKnownStep: "disputed" });
-    return { message: commandSucceeded(result.stdout), orderId };
+    return { message: commandSucceeded(result.stdout, "**Disputa enviada**\n\nMostro recibió la solicitud de disputa."), orderId };
   }
 
   async cancelOrder(orderId: string) {
@@ -296,5 +508,13 @@ export class MostroService {
     if (!relayResult.success || relayResult.data.length === 0) {
       throw new AppError("RELAYS_NOT_CONFIGURED", "RELAYS debe incluir al menos un relay wss://.");
     }
+  }
+
+  private async requireLocalTrade(orderId: string) {
+    const trade = await getTrade(orderId);
+    if (!trade) {
+      throw new AppError("ORDER_NOT_FOUND", "No encontramos esta operación entre las gestionadas por Mostrico.");
+    }
+    return trade;
   }
 }

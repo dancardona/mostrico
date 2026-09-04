@@ -1,7 +1,9 @@
-import { MostroOrder, TradeMessage } from "./types";
+import { ChatMessage, MostroOrder, TradeMessage } from "./types";
 
 const ansiPattern = /\u001b\[[0-9;]*m/g;
 const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
+const lightningInvoicePattern = /(?:lnbc|lntb|lnbcrt)[a-z0-9]{20,}/i;
+const nostrPubkeyPattern = /(?:npub1[023456789acdefghjklmnpqrstuvwxyz]+|[0-9a-f]{64})/i;
 
 export function stripAnsi(value: string) {
   return value.replace(ansiPattern, "");
@@ -207,9 +209,121 @@ export function parseTradeMessages(raw: string, orderId?: string): {
   };
 }
 
-export function commandSucceeded(raw: string) {
+export function commandSucceeded(raw: string, fallback = "Acción enviada a Mostro.") {
+  const text = stripAnsi(raw);
+  if (/waiting for seller payment|seller needs to pay the invoice/i.test(text)) {
+    return "**Invoice Lightning agregada**\n\nEl vendedor debe pagar la hold invoice para bloquear los sats y continuar la operación.";
+  }
+  if (/invoice added|add(?:ed)? lightning invoice|order status updated successfully/i.test(text)) {
+    return "**Invoice Lightning agregada**\n\nEspera la confirmación de Mostro antes de enviar el pago fiat.";
+  }
+  if (/fiat sent|fiat.*marked.*sent/i.test(text)) {
+    return "**Pago fiat notificado**\n\nMostro informó al vendedor que marcaste el pago como enviado.";
+  }
+  if (/rating submitted|rate received|rated successfully/i.test(text)) {
+    return "**Calificación enviada**\n\nMostro recibió tu calificación.";
+  }
+  if (/dispute opened|dispute initiated|dispute.*success/i.test(text)) {
+    return "**Disputa iniciada**\n\nMostro registró la disputa para su revisión.";
+  }
+  return fallback;
+}
+
+export function parseTakeSellResult(raw: string) {
+  const text = stripAnsi(raw);
+  const bondInvoice = text.match(
+    new RegExp(`LIGHTNING\\s+BOND\\s+INVOICE\\s+TO\\s+PAY\\s*:[\\s─-]*(${lightningInvoicePattern.source})`, "i")
+  )?.[1];
+  return { bondInvoice };
+}
+
+export interface CliTradeEvent {
+  action?: string;
+  invoice?: string;
+  orderId?: string;
+  timestamp?: string;
+}
+
+export function parseCliTradeEvents(raw: string): CliTradeEvent[] {
+  const text = stripAnsi(raw);
+  const blocks = text.split(/(?=📄\s+Message\s+\d+\s*:)/i);
+  return blocks.flatMap((block) => {
+    if (!/📄\s+Message\s+\d+\s*:/i.test(block)) return [];
+    const action = block.match(/Action:\s*[^\r\n]*?([A-Z][A-Za-z]+)\s*$/im)?.[1];
+    const timestamp = block.match(/Time:\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/i)?.[1];
+    return [{
+      action,
+      timestamp,
+      orderId: block.match(uuidPattern)?.[0],
+      invoice: block.match(lightningInvoicePattern)?.[0]
+    }];
+  });
+}
+
+function stableChatId(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `incoming-${(hash >>> 0).toString(36)}`;
+}
+
+export function parseChatMessages(raw: string): ChatMessage[] {
   const text = stripAnsi(raw).trim();
-  return text || "Comando enviado a mostro-cli.";
+  if (!text || /no chat messages found/i.test(text)) return [];
+
+  return text.split(/(?=📄\s+Message\s+\d+\s*:)/i).flatMap((block) => {
+    if (!/📄\s+Message\s+\d+\s*:/i.test(block)) return [];
+    const timestamp = block.match(/Time:\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/i)?.[1];
+    const content = block.match(/Content:\s*\r?\n([\s\S]*)$/i)?.[1]
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^\s{3}/, ""))
+      .join("\n")
+      .trim();
+    if (!content) return [];
+    const isoTimestamp = timestamp ? `${timestamp.replace(" ", "T")}Z` : "";
+    return [{
+      id: stableChatId(`${isoTimestamp}\n${content}`),
+      direction: "incoming",
+      text: content,
+      timestamp: isoTimestamp
+    } satisfies ChatMessage];
+  }).sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+}
+
+export interface PeerDisclosure {
+  orderId: string;
+  pubkey: string;
+}
+
+export function parsePeerDisclosures(raw: string): PeerDisclosure[] {
+  const text = stripAnsi(raw);
+  const blocks = text.split(/(?=📄\s+Message\s+\d+\s*:)/i).filter((block) => /📄\s+Message\s+\d+\s*:/i.test(block));
+  const parsedBlocks = blocks.map((block) => {
+    const timestamp = block.match(/Time:\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/i)?.[1];
+    const timestampMs = timestamp ? Date.parse(`${timestamp.replace(" ", "T")}Z`) : Number.NaN;
+    const peerLine = block.split(/\r?\n/).find((line) => /^\s*(?:👤\s*)?Peer:/i.test(line));
+    return {
+      action: block.match(/Action:\s*[^\r\n]*?([A-Z][A-Za-z]+)\s*$/im)?.[1],
+      orderId: block.match(uuidPattern)?.[0],
+      pubkey: peerLine?.match(nostrPubkeyPattern)?.[0],
+      timestampMs
+    };
+  });
+
+  return parsedBlocks.flatMap((block, index) => {
+    if (!block.pubkey) return [];
+    if (block.orderId) return [{ orderId: block.orderId, pubkey: block.pubkey }];
+    if (block.action !== "FiatSentOk" || !Number.isFinite(block.timestampMs)) return [];
+
+    const candidateOrderIds = new Set(parsedBlocks.slice(0, index)
+      .filter((candidate) => candidate.orderId && Number.isFinite(candidate.timestampMs))
+      .filter((candidate) => block.timestampMs >= candidate.timestampMs && block.timestampMs - candidate.timestampMs <= 120_000)
+      .map((candidate) => candidate.orderId as string));
+    if (candidateOrderIds.size !== 1) return [];
+    return [{ orderId: [...candidateOrderIds][0], pubkey: block.pubkey }];
+  });
 }
 
 export function parseNewOrderResult(raw: string) {

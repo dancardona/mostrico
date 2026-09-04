@@ -4,11 +4,13 @@ import {
   cancelOrderCommand,
   disputeCommand,
   fiatSentCommand,
+  getDmUserCommand,
   listOrdersCommand,
   newOrderCommand,
   orderInfoCommand,
   rateCommand,
   releaseOrderCommand,
+  sendDmCommand,
   syncTradeIndexCommand,
   takeSellCommand
 } from "@/lib/mostro/commands";
@@ -28,6 +30,12 @@ describe("Mostro command construction", () => {
     expect(rateCommand(orderId, 5).args).toEqual(["rate", "-o", orderId, "-r", "5"]);
     expect(disputeCommand(orderId).args).toEqual(["dispute", "-o", orderId]);
     expect(syncTradeIndexCommand().args).toEqual(["getlasttradeindex"]);
+    expect(getDmUserCommand({ orderId, pubkey: "1".repeat(64), since: 120 }).args).toEqual([
+      "getdmuser", "-p", "1".repeat(64), "-o", orderId, "--since", "120"
+    ]);
+    expect(sendDmCommand({ orderId, pubkey: "1".repeat(64), message: "Hola, ya pagué" }).args).toEqual([
+      "senddm", "-p", "1".repeat(64), "-o", orderId, "-m", "Hola, ya pagué"
+    ]);
     expect(newOrderCommand({
       kind: "buy",
       currency: "COP",
@@ -50,7 +58,13 @@ describe("Mostro command construction", () => {
     for (const bad of ["uuid; rm -rf /", "$(whoami)", "\"`touch /tmp/x`\""]) {
       expect(() => orderInfoCommand(bad)).toThrow();
       expect(() => fiatSentCommand(bad)).toThrow();
+      expect(() => sendDmCommand({ orderId: bad, pubkey: "1".repeat(64), message: "hola" })).toThrow();
     }
+  });
+
+  it("rejects invalid chat recipients and control characters", () => {
+    expect(() => sendDmCommand({ orderId, pubkey: "$(whoami)", message: "hola" })).toThrow();
+    expect(() => sendDmCommand({ orderId, pubkey: "1".repeat(64), message: "hola\u0000mundo" })).toThrow();
   });
 
   it("requires explicit confirmation for mutating take sell", () => {
