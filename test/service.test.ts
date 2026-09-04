@@ -207,6 +207,88 @@ describe("MostroService order detail fallback", () => {
     })).resolves.toMatchObject({ invoiceAdded: false });
   });
 
+  it("does not notify Mostro twice when fiat was already marked as sent", async () => {
+    vi.mocked(getTrade).mockResolvedValue({
+      createdAt: "2026-09-04T00:05:47.000Z",
+      currency: "COP",
+      role: "taker",
+      kind: "sell",
+      lastKnownStep: "fiat_marked_sent"
+    });
+    const runner = new TakeSellRunner();
+
+    const result = await new MostroService(runner).fiatSent(orderId);
+
+    expect(result).toMatchObject({ alreadyConfirmed: true, orderId });
+    expect(result.message).toContain("ya recibió esta confirmación");
+    expect(runner.calls).toEqual([]);
+    expect(upsertTrade).not.toHaveBeenCalled();
+  });
+
+  it("marks the trade ready for fiat after Mostro accepts the hold invoice", async () => {
+    vi.mocked(getTrade).mockResolvedValue({
+      createdAt: "2026-09-04T00:05:47.000Z",
+      currency: "COP",
+      role: "taker",
+      kind: "sell",
+      lastKnownStep: "waiting_for_lock"
+    });
+    const runner: MostroCliRunner = {
+      async run() {
+        return {
+          exitCode: 0,
+          stdout: `📄 Message 1:
+⏰ Time: 2026-09-04 00:07:41
+🎯 Action: 🎯 HoldInvoicePaymentAccepted
+📝 Details:
+   📋 Order: ${orderId} 2224 sats (COP)
+   ✅ Status: Active`,
+          stderr: "",
+          durationMs: 1
+        };
+      }
+    };
+
+    const result = await new MostroService(runner).messages(orderId, 30);
+
+    expect(result.lifecycle.step).toBe("ready_for_fiat");
+    expect(upsertTrade).toHaveBeenCalledWith(orderId, { lastKnownStep: "ready_for_fiat" });
+  });
+
+  it("recovers a fiat confirmation from a contextual FiatSentOk event", async () => {
+    vi.mocked(getTrade).mockResolvedValue({
+      createdAt: "2026-09-04T00:05:47.000Z",
+      currency: "COP",
+      role: "taker",
+      kind: "sell",
+      lastKnownStep: "waiting_for_lock"
+    });
+    const runner: MostroCliRunner = {
+      async run() {
+        return {
+          exitCode: 0,
+          stdout: `📄 Message 1:
+⏰ Time: 2026-09-04 00:07:41
+🎯 Action: 🎯 HoldInvoicePaymentAccepted
+📝 Details:
+   📋 Order: ${orderId} 2224 sats (COP)
+📄 Message 2:
+⏰ Time: 2026-09-04 00:07:57
+🎯 Action: 💸 FiatSentOk
+📝 Details:
+   👤 Peer: ${"1".repeat(64)}`,
+          stderr: "",
+          durationMs: 1
+        };
+      }
+    };
+
+    const result = await new MostroService(runner).messages(orderId, 30);
+
+    expect(result.lifecycle.step).toBe("fiat_marked_sent");
+    expect(upsertTrade).toHaveBeenCalledWith(orderId, { lastKnownStep: "fiat_marked_sent" });
+  });
+
   it("reports remote success even when local state cannot be saved", async () => {
     vi.mocked(upsertTrade).mockRejectedValue(new Error("disk unavailable"));
     const runner = new TakeSellRunner();

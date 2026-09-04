@@ -42,6 +42,27 @@ function cliTimestampMs(value?: string) {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function hasContextualTradeEvent(
+  events: ReturnType<typeof parseCliTradeEvents>,
+  orderId: string,
+  action: string
+) {
+  return events.some((event, index) => {
+    if (event.action !== action) return false;
+    if (event.orderId) return event.orderId === orderId;
+    const eventTime = cliTimestampMs(event.timestamp);
+    if (eventTime === undefined) return false;
+    const recentOrderIds = new Set(events.slice(0, index)
+      .filter((candidate) => candidate.orderId)
+      .filter((candidate) => {
+        const candidateTime = cliTimestampMs(candidate.timestamp);
+        return candidateTime !== undefined && eventTime >= candidateTime && eventTime - candidateTime <= bondEventMatchWindowMs;
+      })
+      .map((candidate) => candidate.orderId as string));
+    return recentOrderIds.size === 1 && recentOrderIds.has(orderId);
+  });
+}
+
 export class MostroService {
   constructor(
     private runner: MostroCliRunner = getRunner(),
@@ -305,6 +326,8 @@ export class MostroService {
     }
     const exactEvents = events.filter((event) => event.orderId === orderId);
     const readyForInvoice = exactEvents.some((event) => event.action === "AddInvoice");
+    const readyForFiat = exactEvents.some((event) => event.action === "HoldInvoicePaymentAccepted");
+    const fiatSentAccepted = hasContextualTradeEvent(events, orderId, "FiatSentOk");
     const bondEvent = events
       .filter((event) => event.action === "PayBondInvoice" && event.invoice)
       .map((event) => ({ event, timestamp: cliTimestampMs(event.timestamp) }))
@@ -319,6 +342,12 @@ export class MostroService {
       step = "waiting_for_bond";
     }
     if (readyForInvoice && step === "waiting_for_bond") step = "needs_invoice";
+    if (readyForFiat && !["fiat_marked_sent", "waiting_release", "completed", "canceled", "disputed"].includes(step)) {
+      step = "ready_for_fiat";
+    }
+    if (fiatSentAccepted && !["waiting_release", "completed", "canceled", "disputed"].includes(step)) {
+      step = "fiat_marked_sent";
+    }
     if (trade && step !== trade.lastKnownStep) {
       await upsertTrade(orderId, { lastKnownStep: step });
     }
@@ -336,6 +365,15 @@ export class MostroService {
 
   async fiatSent(orderId: string) {
     this.ensureConfigured();
+    const trade = await getTrade(orderId);
+    if (trade && ["fiat_marked_sent", "waiting_release", "completed"].includes(trade.lastKnownStep)) {
+      return {
+        message: "**Pago fiat ya notificado**\n\nMostro ya recibió esta confirmación. No se volvió a enviar.",
+        orderId,
+        alreadyConfirmed: true
+      };
+    }
+
     const command = fiatSentCommand(orderId);
     const result = await this.runner.run(command.args, {
       timeoutMs: command.timeoutMs,
@@ -344,10 +382,14 @@ export class MostroService {
     this.ensureExitOk(result.exitCode, this.resultOutput(result));
     const disclosedPeer = parsePeerDisclosures(this.resultOutput(result)).find((peer) => peer.orderId === orderId)?.pubkey;
     const validatedPeer = nostrPubkeySchema.safeParse(disclosedPeer);
-    await upsertTrade(orderId, {
-      lastKnownStep: "fiat_marked_sent",
-      counterpartyPubkey: validatedPeer.success ? validatedPeer.data : undefined
-    });
+    try {
+      await upsertTrade(orderId, {
+        lastKnownStep: "fiat_marked_sent",
+        counterpartyPubkey: validatedPeer.success ? validatedPeer.data : undefined
+      });
+    } catch {
+      // Mostro already accepted the declaration; local persistence must not make it look retryable.
+    }
     return { message: commandSucceeded(result.stdout, "**Acción enviada**\n\nMostro recibió la confirmación del pago fiat."), orderId };
   }
 

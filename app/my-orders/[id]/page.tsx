@@ -6,7 +6,7 @@ import { Ban, CheckCircle2, RefreshCw, Send, Unlock } from "lucide-react";
 import { Button, Card, ErrorNotice, Notice, type ApiErrorData } from "@/components/ui";
 import { TradeChat } from "@/components/trade-chat";
 import { formatFiatAmount, formatFiatRange, formatNumber, formatPercentage } from "@/lib/format";
-import type { LocalTradeMetadata, TradeMessage } from "@/lib/mostro/types";
+import type { LocalTradeMetadata, LocalTradeStep, TradeLifecycleStatus, TradeMessage } from "@/lib/mostro/types";
 
 type LocalOrder = LocalTradeMetadata & { orderId: string };
 
@@ -14,6 +14,7 @@ export default function MyOrderPage() {
   const params = useParams<{ id: string }>();
   const orderId = params.id;
   const [order, setOrder] = useState<LocalOrder | null>(null);
+  const [lifecycleStep, setLifecycleStep] = useState<LocalTradeStep>("unknown");
   const [messages, setMessages] = useState<TradeMessage[]>([]);
   const [error, setError] = useState<ApiErrorData | null>(null);
   const [notice, setNotice] = useState("");
@@ -38,7 +39,10 @@ export default function MyOrderPage() {
       return;
     }
     setOrder(orderBody.data);
-    if (messagesBody.ok) setMessages(messagesBody.data.messages);
+    if (messagesBody.ok) {
+      setMessages(messagesBody.data.messages);
+      setLifecycleStep((messagesBody.data.lifecycle as TradeLifecycleStatus | undefined)?.step ?? "unknown");
+    }
   }, [orderId]);
 
   useEffect(() => {
@@ -71,6 +75,9 @@ export default function MyOrderPage() {
   if (loading && !order) return <Card>Cargando orden...</Card>;
 
   const closed = order?.lastKnownStep === "canceled" || order?.lastKnownStep === "completed";
+  const effectiveStep = lifecycleStep === "unknown" ? order?.lastKnownStep : lifecycleStep;
+  const fiatAlreadySent = effectiveStep ? ["fiat_marked_sent", "waiting_release", "completed"].includes(effectiveStep) : false;
+  const canMarkFiatSent = effectiveStep === "ready_for_fiat";
   const fiatValue = order?.selectedFiatAmount?.includes("-")
     ? formatFiatRange(...order.selectedFiatAmount.split("-") as [string, string], order.currency)
     : formatFiatAmount(order?.selectedFiatAmount, order?.currency || "COP");
@@ -139,15 +146,25 @@ export default function MyOrderPage() {
 
             <TradeChat orderId={orderId} />
 
-            {!closed && order.kind === "buy" && (
+            {!closed && order.kind === "buy" && fiatAlreadySent && (
+              <Notice tone="ok">
+                <span className="flex items-center gap-2 font-semibold"><CheckCircle2 size={18} /> Pago fiat ya notificado</span>
+                <p className="mt-2 text-sm">Mostro recibió la confirmación. Ahora corresponde esperar la liberación de los sats.</p>
+              </Notice>
+            )}
+
+            {!closed && order.kind === "buy" && !fiatAlreadySent && (
               <Card className="space-y-5">
                 <h2 className="flex items-center gap-2 font-semibold"><Send size={18} /> Confirmar pago fiat</h2>
                 <p className="text-sm text-ink/70">Esta acción solo notifica a Mostro. Debes haber realizado la transferencia fuera de la aplicación.</p>
+                {!canMarkFiatSent && (
+                  <Notice tone="warning">Espera a que Mostro confirme que los sats están asegurados antes de transferir y notificar el pago fiat.</Notice>
+                )}
                 <label className="flex items-start gap-3 rounded border border-line/70 bg-paper/50 p-4 text-sm leading-6">
-                  <input className="mt-1.5" type="checkbox" checked={fiatChecked} onChange={(event) => setFiatChecked(event.target.checked)} />
+                  <input className="mt-1.5" type="checkbox" disabled={!canMarkFiatSent} checked={fiatChecked} onChange={(event) => setFiatChecked(event.target.checked)} />
                   Confirmo que ya envié el pago fiat.
                 </label>
-                <Button className="bg-accent text-paper hover:bg-accent-dark" disabled={!fiatChecked || Boolean(acting)} onClick={() => post("fiat", `/api/trades/${orderId}/fiat-sent`, { confirmedActualFiatTransfer: true })}>
+                <Button className="bg-accent text-paper hover:bg-accent-dark" disabled={!fiatChecked || !canMarkFiatSent || Boolean(acting)} onClick={() => post("fiat", `/api/trades/${orderId}/fiat-sent`, { confirmedActualFiatTransfer: true })}>
                   {acting === "fiat" ? <RefreshCw size={18} className="animate-spin" /> : <CheckCircle2 size={18} />}
                   Marcar fiat como enviado
                 </Button>

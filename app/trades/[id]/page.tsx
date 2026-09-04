@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { AlertTriangle, Check, CheckCircle2, Copy, ExternalLink, RefreshCw, ShieldCheck, Star, Zap } from "lucide-react";
 import { Button, Card, ErrorNotice, MarkdownText, Notice, TextArea, type ApiErrorData } from "@/components/ui";
 import { TradeChat } from "@/components/trade-chat";
-import type { TradeLifecycleStatus, TradeMessage } from "@/lib/mostro/types";
+import type { LocalTradeStep, TradeLifecycleStatus, TradeMessage } from "@/lib/mostro/types";
 
 type BondState = "none" | "payment_required" | "acknowledged" | "accepted";
 
@@ -16,6 +16,7 @@ export default function TradePage() {
   const [ambiguousMessages, setAmbiguousMessages] = useState<TradeMessage[]>([]);
   const [invoice, setInvoice] = useState("");
   const [invoiceState, setInvoiceState] = useState<"unknown" | "pending" | "added">("unknown");
+  const [lifecycleStep, setLifecycleStep] = useState<LocalTradeStep>("unknown");
   const [bondInvoice, setBondInvoice] = useState("");
   const [bondState, setBondState] = useState<BondState>("none");
   const [bondCopied, setBondCopied] = useState(false);
@@ -40,6 +41,7 @@ export default function TradePage() {
     setMessages(body.data.messages);
     setAmbiguousMessages(body.data.ambiguousMessages);
     const lifecycle = body.data.lifecycle as TradeLifecycleStatus | undefined;
+    setLifecycleStep(lifecycle?.step ?? "unknown");
     if (lifecycle?.bondInvoice) {
       setBondInvoice(lifecycle.bondInvoice);
     }
@@ -113,6 +115,9 @@ export default function TradePage() {
     }, 15_000);
     return () => window.clearInterval(interval);
   }, [load, orderId]);
+
+  const fiatAlreadySent = ["fiat_marked_sent", "waiting_release", "completed"].includes(lifecycleStep);
+  const canMarkFiatSent = lifecycleStep === "ready_for_fiat";
 
   return (
     <div className="space-y-6">
@@ -246,19 +251,29 @@ export default function TradePage() {
             </Card>
           )}
 
-          <Card className="space-y-5">
-            <h2 className="flex items-center gap-2 font-semibold"><CheckCircle2 size={18} /> ¿Ya hiciste la transferencia?</h2>
-            <p className="text-sm text-ink/70">
-              Este botón no envía dinero. Solo notifica a Mostro que ya pagaste al vendedor. Úsalo únicamente después de confirmar el método acordado y completar la transferencia fuera de esta aplicación.
-            </p>
-            <label className="flex items-start gap-3 rounded border border-line/70 bg-paper/50 p-4 text-sm leading-6">
-              <input className="mt-1.5" type="checkbox" disabled={invoiceState !== "added"} checked={fiatChecked} onChange={(event) => setFiatChecked(event.target.checked)} />
-              Confirmo que ya envié el pago fiat.
-            </label>
-            <Button className="bg-accent text-paper hover:bg-accent-dark" disabled={!fiatChecked || invoiceState !== "added"} onClick={() => post(`/api/trades/${orderId}/fiat-sent`, { confirmedActualFiatTransfer: true })}>
-              Marcar fiat como enviado
-            </Button>
-          </Card>
+          {fiatAlreadySent ? (
+            <Notice tone="ok">
+              <span className="flex items-center gap-2 font-semibold"><CheckCircle2 size={18} /> Pago fiat ya notificado</span>
+              <p className="mt-2 text-sm">Mostro recibió la confirmación. Ahora corresponde esperar la liberación de los sats.</p>
+            </Notice>
+          ) : (
+            <Card className="space-y-5">
+              <h2 className="flex items-center gap-2 font-semibold"><CheckCircle2 size={18} /> ¿Ya hiciste la transferencia?</h2>
+              <p className="text-sm text-ink/70">
+                Este botón no envía dinero. Solo notifica a Mostro que ya pagaste al vendedor. Úsalo únicamente después de confirmar el método acordado y completar la transferencia fuera de esta aplicación.
+              </p>
+              {!canMarkFiatSent && (
+                <Notice tone="warning">Espera a que Mostro confirme que los sats están asegurados antes de transferir y notificar el pago fiat.</Notice>
+              )}
+              <label className="flex items-start gap-3 rounded border border-line/70 bg-paper/50 p-4 text-sm leading-6">
+                <input className="mt-1.5" type="checkbox" disabled={!canMarkFiatSent} checked={fiatChecked} onChange={(event) => setFiatChecked(event.target.checked)} />
+                Confirmo que ya envié el pago fiat.
+              </label>
+              <Button className="bg-accent text-paper hover:bg-accent-dark" disabled={!fiatChecked || !canMarkFiatSent} onClick={() => post(`/api/trades/${orderId}/fiat-sent`, { confirmedActualFiatTransfer: true })}>
+                Marcar fiat como enviado
+              </Button>
+            </Card>
+          )}
 
           <Card className="space-y-5">
             <h2 className="flex items-center gap-2 font-semibold"><Star size={18} /> Calificar vendedor</h2>

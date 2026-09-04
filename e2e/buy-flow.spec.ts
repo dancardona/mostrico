@@ -33,12 +33,38 @@ test("buyer can take a COP sell order and guard fiat sent", async ({ page }) => 
   await page.getByRole("button", { name: "Enviar", exact: true }).click();
   await expect(page.getByText("Hola, ya inicié el pago")).toBeVisible();
 
+  let lifecycleStep = "ready_for_fiat";
+  await page.route("**/api/trades/11111111-1111-4111-8111-111111111111/messages**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        data: {
+          messages: [],
+          ambiguousMessages: [],
+          lifecycle: { step: lifecycleStep, bondRequired: true, readyForInvoice: true }
+        }
+      })
+    });
+  });
+  await page.route("**/api/trades/11111111-1111-4111-8111-111111111111/fiat-sent", async (route) => {
+    lifecycleStep = "fiat_marked_sent";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, data: { message: "**Pago fiat notificado**\n\nMostro recibió la confirmación." } })
+    });
+  });
+  await page.getByRole("button", { name: "Actualizar mensajes" }).click();
+
   const fiatButton = page.getByRole("button", { name: "Marcar fiat como enviado" });
   await expect(fiatButton).toBeDisabled();
   await page.getByLabel("Confirmo que ya envié el pago fiat.").check();
   await expect(fiatButton).toBeEnabled();
   await fiatButton.click();
-  await expect(page.getByText("Pago fiat notificado", { exact: true })).toBeVisible();
+  await expect(page.getByText("Pago fiat ya notificado", { exact: true })).toBeVisible();
+  await expect(fiatButton).toHaveCount(0);
 
   await page.getByRole("radio", { name: "5 estrellas" }).click();
   await Promise.all([
