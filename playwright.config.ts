@@ -11,6 +11,8 @@ export default defineConfig({
   webServer: {
     command: "npm run dev -- --port 3100",
     env: {
+      MOSTRO_PUBKEY: "1".repeat(64),
+      RELAYS: "wss://relay.example",
       MOSTRO_WEB_MOCK_CLI: "1",
       MOSTRO_STATE_PATH: ".next-e2e/local-state.json",
       NEXT_DIST_DIR: ".next-e2e"
