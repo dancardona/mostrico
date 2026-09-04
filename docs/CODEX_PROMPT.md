@@ -74,8 +74,10 @@ If the CLI offers structured/JSON output in the installed version, prefer it. Ot
 
 ```bash
 mostro-cli listorders -k sell -c cop
+mostro-cli listorders -k buy -c cop
 mostro-cli ordersinfo -o <order-id>
 mostro-cli takesell -o <order-id> [-a <fiat-amount>] [-i <invoice>]
+mostro-cli takebuy -o <order-id> [-a <fiat-amount>]
 mostro-cli addinvoice -o <order-id> -i <invoice>
 mostro-cli getdm --since <minutes>
 mostro-cli fiatsent -o <order-id>
@@ -96,7 +98,7 @@ RELAYS=
 ## Required screens
 
 - `/setup`: CLI/version/config/connectivity diagnostics.
-- `/market`: browse `sell` orders, default COP.
+- `/market`: browse `sell` and `buy` orders in separate tabs, fixed to COP.
 - `/orders/[id]`: detail + take-order wizard.
 - `/trades/[id]`: timeline, messages, invoice, fiat-sent, rating, dispute.
 - `/orders/new`: publish a buy or sell maker order.

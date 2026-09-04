@@ -7,8 +7,11 @@ export const runtime = "nodejs";
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
-    const input = listOrdersInputSchema.parse({ currency: url.searchParams.get("currency") ?? "COP" });
-    return ok(await new MostroService().listOrders(input.currency));
+    const input = listOrdersInputSchema.parse({
+      currency: url.searchParams.get("currency") ?? "COP",
+      kind: url.searchParams.get("kind") ?? "sell"
+    });
+    return ok(await new MostroService().listOrders(input.currency, input.kind));
   } catch (error) {
     return fail(error);
   }

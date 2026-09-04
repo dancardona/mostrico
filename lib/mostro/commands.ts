@@ -1,13 +1,14 @@
 import {
   addInvoiceInputSchema,
   amountSchema,
-  currencySchema,
   newOrderInputSchema,
   nostrPubkeySchema,
   ratingSchema,
   chatMessageSchema,
   chatSinceSchema,
+  listOrdersInputSchema,
   sinceSchema,
+  takeBuyInputSchema,
   takeSellInputSchema,
   uuidSchema
 } from "./schemas";
@@ -20,14 +21,25 @@ export interface CommandSpec {
   mutating: boolean;
 }
 
-export function listOrdersCommand(input: { currency?: string } = {}): CommandSpec {
-  const currency = currencySchema.default("COP").parse(input.currency).toLowerCase();
+export function listOrdersCommand(input: { currency?: string; kind?: "buy" | "sell" } = {}): CommandSpec {
+  const parsed = listOrdersInputSchema.parse(input);
   return {
     action: "listorders",
-    args: ["listorders", "-k", "sell", "-c", currency],
+    args: ["listorders", "-k", parsed.kind, "-c", parsed.currency.toLowerCase()],
     timeoutMs: 45_000,
     mutating: false
   };
+}
+
+export function takeBuyCommand(input: {
+  orderId: string;
+  fiatAmount?: string;
+  confirmed: true;
+}): CommandSpec {
+  const parsed = takeBuyInputSchema.parse(input);
+  const args = ["takebuy", "-o", parsed.orderId];
+  if (parsed.fiatAmount) args.push("-a", amountSchema.parse(parsed.fiatAmount));
+  return { action: "takebuy", args, timeoutMs: 45_000, mutating: true };
 }
 
 export function orderInfoCommand(orderId: string): CommandSpec {

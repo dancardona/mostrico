@@ -5,7 +5,7 @@ test("buyer can take a COP sell order and guard fiat sent", async ({ page }) => 
   await expect(page.getByText("mostro-cli 0.16.1")).toBeVisible();
 
   await page.goto("/market");
-  await expect(page.getByRole("heading", { name: "Comprar Bitcoin" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Mercado Bitcoin" })).toBeVisible();
   await page.getByRole("link", { name: "Ver oferta" }).click();
 
   await expect(page.getByText("50.000 COP - 150.000 COP")).toBeVisible();
@@ -72,6 +72,29 @@ test("buyer can take a COP sell order and guard fiat sent", async ({ page }) => 
     page.getByRole("button", { name: "Enviar calificación" }).click()
   ]);
   await expect(page.getByText("Calificación enviada", { exact: true })).toBeVisible({ timeout: 15_000 });
+});
+
+test("market keeps COP internal and switches between buying and selling", async ({ page }) => {
+  await page.goto("/market");
+
+  await expect(page.getByLabel("Moneda fiat")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Refrescar" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Comprar" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("Oferta de venta")).toBeVisible();
+
+  await page.getByRole("tab", { name: "Vender" }).click();
+  await expect(page.getByRole("tab", { name: "Vender" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("Oferta de compra")).toBeVisible();
+
+  await page.getByRole("link", { name: "Ver oferta" }).click();
+  await expect(page.getByText("Vendedor de sats")).toBeVisible();
+  await page.getByPlaceholder("100.000").fill("100.000");
+  await page.getByLabel("Confirmo que quiero tomar esta oferta como vendedor.").check();
+  await page.getByRole("button", { name: /Tomar oferta/ }).click();
+
+  await page.waitForURL("**/trades/22222222-2222-4222-8222-222222222222?role=seller&bond=none&payment=pending");
+  await expect(page.getByRole("heading", { name: "Hold invoice de la operación" })).toBeVisible();
+  await expect(page.getByText("Agregar invoice", { exact: true })).toHaveCount(0);
 });
 
 test("formats an invalid trade index and offers explicit synchronization", async ({ page }) => {

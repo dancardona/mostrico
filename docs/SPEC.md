@@ -449,9 +449,10 @@ Return:
 
 Never return mnemonic/private key/database content.
 
-### `GET /api/orders?currency=COP`
+### `GET /api/orders?currency=COP&kind=sell`
 
-Internally force `kind=sell` for the public market view.
+The market keeps `currency=COP` internal while allowing the UI to request
+`kind=sell` for buyers or `kind=buy` for sellers.
 
 ### `POST /api/orders`
 
@@ -477,6 +478,14 @@ Uses `ordersinfo`.
 `fiatAmount` and invoice may be optional depending on fixed/range/deferred-invoice flow. `confirmed` is mandatory.
 
 If Mostro responds with `PayBondInvoice`, return the bond invoice only to the initiating browser session, set the local step to `waiting_for_bond`, and do not call `addinvoice` yet. Never persist the full invoice. Once Mostro emits `AddInvoice`, allow the buyer to submit the payout invoice.
+
+### `POST /api/trades/take-buy`
+
+Takes a public buy order as a seller. It accepts `orderId`, an optional range
+`fiatAmount`, and mandatory `confirmed: true`. Return either the anti-abuse bond
+invoice or the trade hold invoice without persisting either invoice. The seller
+must pay the trade hold invoice outside Mostrico and may only release after
+Mostro reports that the buyer sent fiat.
 
 ### `POST /api/trades/add-invoice`
 
@@ -545,13 +554,15 @@ Never ask for mnemonic/nsec.
 
 ### `/market`
 
-Title: **Comprar Bitcoin**
+Title: **Mercado Bitcoin**
 
-Explain that these are people selling sats.
+Provide two tabs: **Comprar** for people selling sats and **Vender** for people
+buying sats.
 
 Default:
 - currency COP
-- kind sell, fixed internally
+- currency input hidden and fixed to COP
+- kind selected internally from the active tab
 
 Order cards/table should show only what is actually available:
 - fiat amount/range
@@ -579,13 +590,17 @@ For sell orders, explain that Mostro may return a hold invoice and that Mostrico
 
 Show locally persisted maker metadata, recent Mostro messages, and role-specific actions. Canceling and releasing require explicit confirmation. Releasing must state that the user has already received and verified the fiat payment.
 
-### `/orders/[id]` — buying wizard
+### `/orders/[id]` — take-order wizard
 
 Step 1 — amount:
 - fixed: display read-only
 - range: input fiat amount and validate min/max
 
 Step 2 — invoice:
+
+For sell offers, collect or defer the buyer payout invoice. For buy offers, do
+not request a payout invoice; after `takebuy`, show the seller the hold invoice
+that locks the sats.
 
 Copy:
 > Esta factura Lightning es donde recibirás los sats cuando el vendedor libere la operación.
@@ -723,6 +738,7 @@ Use a server-side queue/mutex.
 
 Never automatically retry mutating actions:
 - `takesell`
+- `takebuy`
 - `addinvoice`
 - `fiatsent`
 - `rate`
@@ -875,7 +891,6 @@ Spanish first, but keep strings structured so i18n can be added later.
 
 ## 19. Future phases — do not implement now
 
-- taking public buy orders as a seller
 - richer maker-order status synchronization
 - Mostro community/instance discovery
 - Lightning Address

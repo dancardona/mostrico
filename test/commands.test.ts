@@ -12,6 +12,7 @@ import {
   releaseOrderCommand,
   sendDmCommand,
   syncTradeIndexCommand,
+  takeBuyCommand,
   takeSellCommand
 } from "@/lib/mostro/commands";
 
@@ -21,9 +22,13 @@ const invoice = "lnbc1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3
 describe("Mostro command construction", () => {
   it("builds fixed allowlisted argument arrays", () => {
     expect(listOrdersCommand({ currency: "COP" }).args).toEqual(["listorders", "-k", "sell", "-c", "cop"]);
+    expect(listOrdersCommand({ currency: "COP", kind: "buy" }).args).toEqual(["listorders", "-k", "buy", "-c", "cop"]);
     expect(orderInfoCommand(orderId).args).toEqual(["ordersinfo", "-o", orderId]);
     expect(takeSellCommand({ orderId, fiatAmount: "100000", confirmed: true }).args).toEqual([
       "takesell", "-o", orderId, "-a", "100000"
+    ]);
+    expect(takeBuyCommand({ orderId, fiatAmount: "100000", confirmed: true }).args).toEqual([
+      "takebuy", "-o", orderId, "-a", "100000"
     ]);
     expect(addInvoiceCommand({ orderId, invoice }).args).toEqual(["addinvoice", "-o", orderId, "-i", invoice]);
     expect(fiatSentCommand(orderId).args).toEqual(["fiatsent", "-o", orderId]);

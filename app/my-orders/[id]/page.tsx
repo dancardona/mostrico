@@ -214,6 +214,7 @@ function statusLabel(status: LocalTradeMetadata["lastKnownStep"]) {
     waiting_for_bond: "Esperando garantía",
     needs_invoice: "Requiere invoice",
     waiting_for_lock: "Esperando bloqueo",
+    waiting_for_fiat: "Esperando pago fiat",
     ready_for_fiat: "Lista para pago fiat",
     fiat_marked_sent: "Fiat marcado como enviado",
     waiting_release: "Esperando liberación",

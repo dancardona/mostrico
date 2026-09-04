@@ -46,6 +46,7 @@ export type LocalTradeStep =
   | "waiting_for_bond"
   | "needs_invoice"
   | "waiting_for_lock"
+  | "waiting_for_fiat"
   | "ready_for_fiat"
   | "fiat_marked_sent"
   | "waiting_release"
@@ -85,10 +86,21 @@ export interface TakeSellResult {
   nextStep: "pay_bond" | "add_invoice" | "waiting_for_seller";
 }
 
+export interface TakeBuyResult {
+  orderId: string;
+  message: string;
+  paymentInvoice?: string;
+  bondInvoice?: string;
+  nextStep: "pay_bond" | "pay_invoice" | "waiting_for_lock";
+}
+
 export interface TradeLifecycleStatus {
   step: LocalTradeStep;
+  kind?: OrderKind;
+  role?: "maker" | "taker";
   bondRequired: boolean;
   bondInvoice?: string;
+  paymentInvoice?: string;
   readyForInvoice: boolean;
 }
 

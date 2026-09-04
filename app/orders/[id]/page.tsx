@@ -23,6 +23,7 @@ export default function OrderPage() {
   const [submitting, setSubmitting] = useState(false);
 
   const needsAmount = Boolean(order?.minFiatAmount && order?.maxFiatAmount && !order?.fiatAmount);
+  const isBuyOffer = order?.kind === "buy";
   const selectedAmount = needsAmount ? normalizeFiatInput(fiatAmount) : order?.fiatAmount;
   const amountError = useMemo(() => {
     if (!needsAmount || !fiatAmount || !order) return "";
@@ -32,7 +33,7 @@ export default function OrderPage() {
     if (order.maxFiatAmount && numericAmount > Number(order.maxFiatAmount)) return "El monto supera el máximo de la oferta.";
     return "";
   }, [fiatAmount, needsAmount, order, selectedAmount]);
-  const canSubmit = confirmed && !submitting && (!needsAmount || Boolean(selectedAmount && !amountError)) && (deferInvoice || invoice);
+  const canSubmit = confirmed && !submitting && (!needsAmount || Boolean(selectedAmount && !amountError)) && (isBuyOffer || deferInvoice || invoice);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -48,17 +49,17 @@ export default function OrderPage() {
     if (body.data.fiatAmount) setFiatAmount(body.data.fiatAmount);
   }, [orderId]);
 
-  async function takeSell() {
+  async function takeOrder() {
     setSubmitting(true);
     setError(null);
     setSyncNotice("");
-    const response = await fetch("/api/trades/take-sell", {
+    const response = await fetch(isBuyOffer ? "/api/trades/take-buy" : "/api/trades/take-sell", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         orderId,
         fiatAmount: needsAmount ? selectedAmount : undefined,
-        invoice: deferInvoice ? undefined : invoice,
+        invoice: isBuyOffer || deferInvoice ? undefined : invoice,
         confirmed: true
       })
     });
@@ -68,8 +69,13 @@ export default function OrderPage() {
       setError(body.error);
       return;
     }
-    const invoiceStatus = body.data.invoiceAdded ? "added" : "pending";
     const bondStatus = body.data.nextStep === "pay_bond" ? "pending" : "none";
+    if (isBuyOffer) {
+      const paymentStatus = body.data.paymentInvoice ? "pending" : "waiting";
+      router.push(`/trades/${orderId}?role=seller&bond=${bondStatus}&payment=${paymentStatus}`);
+      return;
+    }
+    const invoiceStatus = body.data.invoiceAdded ? "added" : "pending";
     router.push(`/trades/${orderId}?bond=${bondStatus}&invoice=${invoiceStatus}`);
   }
 
@@ -162,29 +168,36 @@ export default function OrderPage() {
               )}
             </section>
 
-            <section className="border-b border-line/60 pb-7">
-              <div className="mb-4 flex items-center gap-2 font-semibold"><span className="grid h-7 w-7 place-items-center rounded bg-accent text-sm text-paper">2</span> Invoice Lightning</div>
-              <p className="mb-4 text-sm leading-6 text-ink/70">Esta factura Lightning es donde recibirás los sats cuando el vendedor libere la operación.</p>
-              <TextArea value={invoice} onChange={(event) => setInvoice(event.target.value)} disabled={deferInvoice} placeholder="lnbc..." />
-              <label className="mt-4 flex items-center gap-3 rounded border border-line/70 bg-paper/50 p-4 text-sm leading-6">
-                <input type="checkbox" checked={deferInvoice} onChange={(event) => setDeferInvoice(event.target.checked)} />
-                Agregar invoice después
-              </label>
-            </section>
+            {!isBuyOffer && (
+              <section className="border-b border-line/60 pb-7">
+                <div className="mb-4 flex items-center gap-2 font-semibold"><span className="grid h-7 w-7 place-items-center rounded bg-accent text-sm text-paper">2</span> Invoice Lightning</div>
+                <p className="mb-4 text-sm leading-6 text-ink/70">Esta factura Lightning es donde recibirás los sats cuando el vendedor libere la operación.</p>
+                <TextArea value={invoice} onChange={(event) => setInvoice(event.target.value)} disabled={deferInvoice} placeholder="lnbc..." />
+                <label className="mt-4 flex items-center gap-3 rounded border border-line/70 bg-paper/50 p-4 text-sm leading-6">
+                  <input type="checkbox" checked={deferInvoice} onChange={(event) => setDeferInvoice(event.target.checked)} />
+                  Agregar invoice después
+                </label>
+              </section>
+            )}
 
             <section>
               <div className="mb-4 flex items-center gap-2 font-semibold"><FileText size={18} /> Revisión</div>
               <div className="space-y-2 rounded border border-line bg-paper p-4 text-sm leading-6 sm:p-5">
                 <p><strong>Oferta:</strong> <span className="break-all">{orderId}</span></p>
                 <p><strong>Monto fiat:</strong> {selectedAmount ? formatFiatAmount(selectedAmount, order.currency) : "Pendiente"}</p>
-                <p><strong>Invoice:</strong> {deferInvoice ? "Se agregará después" : invoice ? "Lista para enviar al CLI" : "Pendiente"}</p>
+                <p><strong>Tu rol:</strong> {isBuyOffer ? "Vendedor de sats" : "Comprador de sats"}</p>
+                {!isBuyOffer && <p><strong>Invoice:</strong> {deferInvoice ? "Se agregará después" : invoice ? "Lista para enviar al CLI" : "Pendiente"}</p>}
               </div>
-              <Notice className="mt-5" tone="warning">Tomar la oferta inicia la operación, pero no envía dinero fiat.</Notice>
+              <Notice className="mt-5" tone="warning">
+                {isBuyOffer
+                  ? "Tomar la oferta inicia la operación, pero no bloquea sats automáticamente. Mostro te entregará una hold invoice para pagar desde tu wallet."
+                  : "Tomar la oferta inicia la operación, pero no envía dinero fiat."}
+              </Notice>
               <label className="mt-5 flex items-start gap-3 rounded border border-line/70 bg-paper/50 p-4 text-sm leading-6">
                 <input className="mt-1.5" type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
-                Confirmo que quiero tomar esta oferta como comprador.
+                Confirmo que quiero tomar esta oferta como {isBuyOffer ? "vendedor" : "comprador"}.
               </label>
-              <Button className="mt-5 w-full bg-accent text-paper hover:bg-accent-dark" disabled={!canSubmit} onClick={takeSell}>
+              <Button className="mt-5 w-full bg-accent text-paper hover:bg-accent-dark" disabled={!canSubmit} onClick={takeOrder}>
                 {submitting ? <RefreshCw size={18} className="animate-spin" /> : <Check size={18} />}
                 Tomar oferta
                 <ArrowRight size={18} />

@@ -8,6 +8,8 @@ export const currencySchema = z
   .toUpperCase()
   .regex(/^[A-Z]{3}$/);
 
+export const orderKindSchema = z.enum(["buy", "sell"]);
+
 export const amountSchema = z
   .string()
   .trim()
@@ -100,7 +102,8 @@ export const invoiceSchema = z
   .regex(/^(?:lnbc|lntb|lnbcrt)[a-z0-9]+$/i, "Factura Lightning inválida");
 
 export const listOrdersInputSchema = z.object({
-  currency: currencySchema.default("COP")
+  currency: currencySchema.default("COP"),
+  kind: orderKindSchema.default("sell")
 });
 
 export const takeSellInputSchema = z.object({
@@ -110,13 +113,19 @@ export const takeSellInputSchema = z.object({
   confirmed: z.literal(true)
 });
 
+export const takeBuyInputSchema = z.object({
+  orderId: uuidSchema,
+  fiatAmount: amountSchema.optional(),
+  confirmed: z.literal(true)
+});
+
 export const addInvoiceInputSchema = z.object({
   orderId: uuidSchema,
   invoice: invoiceSchema
 });
 
 export const newOrderInputSchema = z.object({
-  kind: z.enum(["buy", "sell"]),
+  kind: orderKindSchema,
   currency: currencySchema.default("COP"),
   fiatAmount: z.union([wholeAmountSchema, fiatRangeSchema]),
   satsAmount: satsAmountSchema.default("0"),

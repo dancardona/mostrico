@@ -130,6 +130,32 @@ describe("MostroService order detail fallback", () => {
     expect(upsertTrade).toHaveBeenCalledWith(orderId, expect.not.objectContaining({ invoice: expect.anything() }));
   });
 
+  it("takes a buy order as seller and returns the hold invoice", async () => {
+    const invoice = "lnbc1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3qpp5qqqsyqcyq5rqwzqfka";
+    const calls: string[][] = [];
+    const runner: MostroCliRunner = {
+      async run(args) {
+        calls.push([...args]);
+        return {
+          exitCode: 0,
+          stdout: `Payment Invoice Received\nOrder ID: ${orderId}\nLIGHTNING INVOICE TO PAY:\n${invoice}`,
+          stderr: "",
+          durationMs: 1
+        };
+      }
+    };
+
+    const result = await new MostroService(runner).takeBuy({ orderId, fiatAmount: "100000", confirmed: true });
+
+    expect(calls).toEqual([["takebuy", "-o", orderId, "-a", "100000"]]);
+    expect(result).toMatchObject({ paymentInvoice: invoice, nextStep: "pay_invoice" });
+    expect(upsertTrade).toHaveBeenCalledWith(orderId, expect.objectContaining({
+      role: "taker",
+      kind: "buy",
+      lastKnownStep: "waiting_for_lock"
+    }));
+  });
+
   it("recovers the matching bond from getdm and keeps general messages redacted", async () => {
     const invoice = "lnbc1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3qpp5qqqsyqcyq5rqwzqfka";
     vi.mocked(getTrade).mockResolvedValue({

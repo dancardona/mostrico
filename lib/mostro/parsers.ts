@@ -237,6 +237,17 @@ export function parseTakeSellResult(raw: string) {
   return { bondInvoice };
 }
 
+export function parseTakeBuyResult(raw: string) {
+  const text = stripAnsi(raw);
+  const bondInvoice = text.match(
+    new RegExp(`LIGHTNING\\s+BOND\\s+INVOICE\\s+TO\\s+PAY\\s*:[\\s─-]*(${lightningInvoicePattern.source})`, "i")
+  )?.[1];
+  const paymentInvoice = text.match(
+    new RegExp(`LIGHTNING(?!\\s+BOND)\\s+INVOICE\\s+TO\\s+PAY\\s*:[\\s─-]*(${lightningInvoicePattern.source})`, "i")
+  )?.[1];
+  return { bondInvoice, paymentInvoice };
+}
+
 export interface CliTradeEvent {
   action?: string;
   invoice?: string;

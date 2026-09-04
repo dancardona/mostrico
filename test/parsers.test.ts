@@ -9,6 +9,7 @@ import {
   parseOrderDetail,
   parseOrders,
   parsePeerDisclosures,
+  parseTakeBuyResult,
   parseTakeSellResult,
   parseTradeMessages
 } from "@/lib/mostro/parsers";
@@ -106,6 +107,15 @@ ${invoice}
 ─────────────────────────────────────`;
 
     expect(parseTakeSellResult(output)).toEqual({ bondInvoice: invoice });
+  });
+
+  it("distinguishes a trade hold invoice from an anti-abuse bond", () => {
+    const invoice = "lnbc1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3qpp5qqqsyqcyq5rqwzqfka";
+    const output = `Payment Invoice Received
+LIGHTNING INVOICE TO PAY:
+${invoice}`;
+
+    expect(parseTakeBuyResult(output)).toEqual({ bondInvoice: undefined, paymentInvoice: invoice });
   });
 
   it("groups getdm lifecycle events without exposing unrelated structure", () => {

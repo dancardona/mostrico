@@ -11,6 +11,7 @@ import {
   rateCommand,
   releaseOrderCommand,
   syncTradeIndexCommand,
+  takeBuyCommand,
   takeSellCommand
 } from "./commands";
 import {
@@ -21,17 +22,19 @@ import {
   parseOrderDetail,
   parseOrders,
   parsePeerDisclosures,
+  parseTakeBuyResult,
   parseTakeSellResult,
   parseTradeMessages
 } from "./parsers";
 import { chatMessageSchema, mostroPubkeySchema, nostrPubkeySchema, relayListSchema, type NewOrderInput } from "./schemas";
 import { getRunner } from "./runner";
-import { AppError, type CreatedOrderResult, Diagnostics, MostroCliRunner, type TakeSellResult } from "./types";
+import { AppError, type CreatedOrderResult, Diagnostics, MostroCliRunner, type TakeBuyResult, type TakeSellResult } from "./types";
 import { appendChatMessage, getTrade, mergeChatMessages, upsertTrade } from "@/lib/store/local-state";
 import { cacheOrders, getCachedOrder } from "./order-cache";
 import { parseCliError } from "./cli-error";
 import { redactSensitive } from "./redact";
 import { cacheBondInvoice, clearCachedBondInvoice, getCachedBondInvoice } from "./bond-cache";
+import { cachePaymentInvoice, clearCachedPaymentInvoice, getCachedPaymentInvoice } from "./payment-invoice-cache";
 import { getChatTransport, type ChatTransport } from "./chat-transport";
 
 const bondEventMatchWindowMs = 2 * 60_000;
@@ -115,9 +118,9 @@ export class MostroService {
     }
   }
 
-  async listOrders(currency = "COP") {
+  async listOrders(currency = "COP", kind: "buy" | "sell" = "sell") {
     this.ensureConfigured();
-    const command = listOrdersCommand({ currency });
+    const command = listOrdersCommand({ currency, kind });
     const result = await this.runner.run(command.args, { timeoutMs: command.timeoutMs });
     this.ensureExitOk(result.exitCode, this.resultOutput(result));
     const orders = parseOrders(result.stdout);
@@ -284,6 +287,50 @@ export class MostroService {
     }
   }
 
+  async takeBuy(input: { orderId: string; fiatAmount?: string; confirmed: true }): Promise<TakeBuyResult> {
+    this.ensureConfigured();
+    const makerPubkey = getCachedOrder(input.orderId)?.makerPubkey;
+    const parsedMakerPubkey = nostrPubkeySchema.safeParse(makerPubkey);
+    const counterpartyPubkey = parsedMakerPubkey.success ? parsedMakerPubkey.data : undefined;
+    const command = takeBuyCommand(input);
+    const result = await this.runner.run(command.args, {
+      timeoutMs: command.timeoutMs,
+      preserveInvoices: true
+    });
+    const output = this.resultOutput(result);
+    this.ensureExitOk(result.exitCode, output);
+    const { bondInvoice, paymentInvoice } = parseTakeBuyResult(output);
+
+    if (bondInvoice) cacheBondInvoice(input.orderId, bondInvoice);
+    if (paymentInvoice) cachePaymentInvoice(input.orderId, paymentInvoice);
+
+    const lastKnownStep = bondInvoice ? "waiting_for_bond" : "waiting_for_lock";
+    try {
+      await upsertTrade(input.orderId, {
+        currency: "COP",
+        role: "taker",
+        kind: "buy",
+        selectedFiatAmount: input.fiatAmount,
+        counterpartyPubkey,
+        lastKnownStep
+      });
+    } catch {
+      // Mostro already accepted the order; local persistence must not make it look retryable.
+    }
+
+    return {
+      orderId: input.orderId,
+      message: bondInvoice
+        ? "Mostro requiere una garantía anti-abuso antes de entregar la hold invoice de la operación."
+        : paymentInvoice
+          ? "Oferta tomada. Paga la hold invoice para bloquear los sats."
+          : "Oferta tomada. Espera la hold invoice de Mostro.",
+      bondInvoice,
+      paymentInvoice,
+      nextStep: bondInvoice ? "pay_bond" : paymentInvoice ? "pay_invoice" : "waiting_for_lock"
+    };
+  }
+
   async addInvoice(input: { orderId: string; invoice: string }) {
     this.ensureConfigured();
     const command = addInvoiceCommand(input);
@@ -328,6 +375,9 @@ export class MostroService {
     const readyForInvoice = exactEvents.some((event) => event.action === "AddInvoice");
     const readyForFiat = exactEvents.some((event) => event.action === "HoldInvoicePaymentAccepted");
     const fiatSentAccepted = hasContextualTradeEvent(events, orderId, "FiatSentOk");
+    const paymentEvent = exactEvents
+      .filter((event) => event.action === "PayInvoice" && event.invoice)
+      .at(-1);
     const bondEvent = events
       .filter((event) => event.action === "PayBondInvoice" && event.invoice)
       .map((event) => ({ event, timestamp: cliTimestampMs(event.timestamp) }))
@@ -336,14 +386,21 @@ export class MostroService {
       ))
       .sort((left, right) => Math.abs((left.timestamp ?? 0) - createdAt) - Math.abs((right.timestamp ?? 0) - createdAt))[0]?.event;
     const bondInvoice = bondEvent?.invoice ?? getCachedBondInvoice(orderId);
+    const paymentInvoice = paymentEvent?.invoice ?? getCachedPaymentInvoice(orderId);
+    if (paymentEvent?.invoice) {
+      cachePaymentInvoice(orderId, paymentEvent.invoice);
+      clearCachedBondInvoice(orderId);
+    }
 
     let step = trade?.lastKnownStep ?? "unknown";
     if (bondEvent && !["waiting_for_lock", "ready_for_fiat", "fiat_marked_sent", "waiting_release", "completed", "canceled", "disputed"].includes(step)) {
       step = "waiting_for_bond";
     }
+    if (paymentEvent && step === "waiting_for_bond") step = "waiting_for_lock";
     if (readyForInvoice && step === "waiting_for_bond") step = "needs_invoice";
     if (readyForFiat && !["fiat_marked_sent", "waiting_release", "completed", "canceled", "disputed"].includes(step)) {
-      step = "ready_for_fiat";
+      step = trade?.kind === "buy" && trade.role === "taker" ? "waiting_for_fiat" : "ready_for_fiat";
+      if (trade?.kind === "buy" && trade.role === "taker") clearCachedPaymentInvoice(orderId);
     }
     if (fiatSentAccepted && !["waiting_release", "completed", "canceled", "disputed"].includes(step)) {
       step = "fiat_marked_sent";
@@ -356,8 +413,11 @@ export class MostroService {
       ...parseTradeMessages(redactSensitive(output), orderId),
       lifecycle: {
         step,
+        kind: trade?.kind,
+        role: trade?.role,
         bondRequired: Boolean(bondInvoice) || trade?.lastKnownStep === "waiting_for_bond",
         bondInvoice,
+        paymentInvoice,
         readyForInvoice
       }
     };
