@@ -79,6 +79,75 @@ class InvalidTradeIndexRunner implements MostroCliRunner {
   }
 }
 
+function machineEnvelope(data: unknown) {
+  return JSON.stringify({ schema_version: 1, ok: true, data });
+}
+
+class MachineApiRunner implements MostroCliRunner {
+  calls: string[][] = [];
+
+  constructor(private rejectFiat = false) {}
+
+  async run(args: readonly string[]): Promise<RunResult> {
+    this.calls.push([...args]);
+    if (args[0] === "api" && args[1] === "capabilities") {
+      return {
+        exitCode: 0,
+        stdout: machineEnvelope({
+          api_version: 1,
+          cli_version: "0.16.1",
+          features: ["fiat-sent", "restore-persist", "trade-status"]
+        }),
+        stderr: "",
+        durationMs: 1
+      };
+    }
+    if (args[0] === "api" && args[1] === "fiat-sent") {
+      return this.rejectFiat
+        ? {
+            exitCode: 1,
+            stdout: JSON.stringify({
+              schema_version: 1,
+              ok: false,
+              error: { code: "MOSTRO_REJECTED", message: "FiatSent rejected" }
+            }),
+            stderr: "FiatSent rejected",
+            durationMs: 1
+          }
+        : {
+            exitCode: 0,
+            stdout: machineEnvelope({
+              action: "fiat-sent",
+              acknowledged_action: "fiat-sent-ok",
+              already_acknowledged: false,
+              order_id: orderId,
+              status: "fiat-sent"
+            }),
+            stderr: "",
+            durationMs: 1
+          };
+    }
+    if (args[0] === "api" && args[1] === "restore") {
+      return {
+        exitCode: 0,
+        stdout: machineEnvelope({
+          persisted: { orders: 1, disputes: 1 },
+          orders: [{ order_id: orderId, trade_index: 4, status: "fiat-sent" }],
+          disputes: [{
+            dispute_id: "22222222-2222-4222-8222-222222222222",
+            order_id: "33333333-3333-4333-8333-333333333333",
+            trade_index: 5,
+            status: "initiated"
+          }]
+        }),
+        stderr: "",
+        durationMs: 1
+      };
+    }
+    return { exitCode: 1, stdout: "", stderr: "unexpected command", durationMs: 1 };
+  }
+}
+
 describe("MostroService order detail fallback", () => {
   beforeEach(() => {
     vi.mocked(upsertTrade).mockReset();
@@ -190,7 +259,7 @@ describe("MostroService order detail fallback", () => {
       readyForInvoice: false
     });
     expect(JSON.stringify(result.ambiguousMessages)).not.toContain(invoice);
-    expect(upsertTrade).toHaveBeenCalledWith(orderId, { lastKnownStep: "waiting_for_bond" });
+    expect(upsertTrade).toHaveBeenCalledWith(orderId, expect.objectContaining({ lastKnownStep: "waiting_for_bond" }));
   });
 
   it("creates a sell order and returns its hold invoice without persisting it", async () => {
@@ -251,6 +320,58 @@ describe("MostroService order detail fallback", () => {
     expect(upsertTrade).not.toHaveBeenCalled();
   });
 
+  it("marks fiat through the machine API only after FiatSentOk", async () => {
+    const runner = new MachineApiRunner();
+
+    const result = await new MostroService(runner).fiatSent(orderId);
+
+    expect(runner.calls).toEqual([
+      ["api", "capabilities"],
+      ["api", "fiat-sent", "-o", orderId]
+    ]);
+    expect(result).toMatchObject({ orderId, acknowledged: true });
+    expect(upsertTrade).toHaveBeenCalledWith(orderId, { lastKnownStep: "fiat_marked_sent" });
+  });
+
+  it("uses the legacy fiat command when the official CLI has no machine API", async () => {
+    const runner = new TakeSellRunner();
+
+    const result = await new MostroService(runner).fiatSent(orderId);
+
+    expect(runner.calls).toEqual([
+      ["api", "capabilities"],
+      ["fiatsent", "-o", orderId]
+    ]);
+    expect(result).toMatchObject({ orderId });
+  });
+
+  it("does not retry fiat through the legacy command after a machine API error", async () => {
+    const runner = new MachineApiRunner(true);
+
+    await expect(new MostroService(runner).fiatSent(orderId)).rejects.toMatchObject({
+      code: "MOSTRO_REJECTED"
+    });
+    expect(runner.calls).toEqual([
+      ["api", "capabilities"],
+      ["api", "fiat-sent", "-o", orderId]
+    ]);
+    expect(upsertTrade).not.toHaveBeenCalled();
+  });
+
+  it("restores CLI trade keys and mirrors minimal lifecycle state in Mostrico", async () => {
+    const runner = new MachineApiRunner();
+
+    const result = await new MostroService(runner).restoreSession();
+
+    expect(runner.calls).toEqual([
+      ["api", "capabilities"],
+      ["api", "restore"]
+    ]);
+    expect(result).toMatchObject({ orders: 1, disputes: 1, orderIds: [orderId] });
+    expect(upsertTrade).toHaveBeenCalledWith(orderId, { lastKnownStep: "fiat_marked_sent" });
+    expect(upsertTrade).toHaveBeenCalledWith("33333333-3333-4333-8333-333333333333", { lastKnownStep: "disputed" });
+  });
+
   it("marks the trade ready for fiat after Mostro accepts the hold invoice", async () => {
     vi.mocked(getTrade).mockResolvedValue({
       createdAt: "2026-09-04T00:05:47.000Z",
@@ -278,7 +399,7 @@ describe("MostroService order detail fallback", () => {
     const result = await new MostroService(runner).messages(orderId, 30);
 
     expect(result.lifecycle.step).toBe("ready_for_fiat");
-    expect(upsertTrade).toHaveBeenCalledWith(orderId, { lastKnownStep: "ready_for_fiat" });
+    expect(upsertTrade).toHaveBeenCalledWith(orderId, expect.objectContaining({ lastKnownStep: "ready_for_fiat" }));
   });
 
   it("recovers a fiat confirmation from a contextual FiatSentOk event", async () => {
@@ -312,7 +433,7 @@ describe("MostroService order detail fallback", () => {
     const result = await new MostroService(runner).messages(orderId, 30);
 
     expect(result.lifecycle.step).toBe("fiat_marked_sent");
-    expect(upsertTrade).toHaveBeenCalledWith(orderId, { lastKnownStep: "fiat_marked_sent" });
+    expect(upsertTrade).toHaveBeenCalledWith(orderId, expect.objectContaining({ lastKnownStep: "fiat_marked_sent" }));
   });
 
   it("reports remote success even when local state cannot be saved", async () => {

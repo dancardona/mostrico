@@ -6,6 +6,9 @@ import {
   getDmCommand,
   getDmUserCommand,
   listOrdersCommand,
+  machineCapabilitiesCommand,
+  machineFiatSentCommand,
+  machineRestoreCommand,
   newOrderCommand,
   orderInfoCommand,
   rateCommand,
@@ -19,7 +22,6 @@ import {
   parseCliTradeEvents,
   parseChatMessages,
   parseNewOrderResult,
-  parseOrderDetail,
   parseOrders,
   parsePeerDisclosures,
   parseTakeBuyResult,
@@ -28,6 +30,7 @@ import {
 } from "./parsers";
 import { chatMessageSchema, mostroPubkeySchema, nostrPubkeySchema, relayListSchema, type NewOrderInput } from "./schemas";
 import { getRunner } from "./runner";
+import { isPayoutStep, normalizeStatus, reconcilePayout } from "./payout";
 import { AppError, type CreatedOrderResult, Diagnostics, MostroCliRunner, type TakeBuyResult, type TakeSellResult } from "./types";
 import { appendChatMessage, getTrade, mergeChatMessages, upsertTrade } from "@/lib/store/local-state";
 import { cacheOrders, getCachedOrder } from "./order-cache";
@@ -36,6 +39,13 @@ import { redactSensitive } from "./redact";
 import { cacheBondInvoice, clearCachedBondInvoice, getCachedBondInvoice } from "./bond-cache";
 import { cachePaymentInvoice, clearCachedPaymentInvoice, getCachedPaymentInvoice } from "./payment-invoice-cache";
 import { getChatTransport, type ChatTransport } from "./chat-transport";
+import {
+  machineCapabilitiesSchema,
+  machineFiatSentSchema,
+  machineRestoreSchema,
+  parseMachineApiEnvelope,
+  type MachineApiEnvelope
+} from "./machine-api";
 
 const bondEventMatchWindowMs = 2 * 60_000;
 
@@ -83,8 +93,10 @@ export class MostroService {
     if (!relayResult.success || relayCount === 0) warnings.push("Configura RELAYS con una lista wss:// separada por comas.");
 
     try {
-      const version = await this.runner.run(["--version"], { timeoutMs: 10_000 });
-      const helpChecks = await Promise.all([
+      const capabilitiesCommand = machineCapabilitiesCommand();
+      const [version, capabilitiesResult, ...helpChecks] = await Promise.all([
+        this.runner.run(["--version"], { timeoutMs: 10_000 }),
+        this.runner.run(capabilitiesCommand.args, { timeoutMs: capabilitiesCommand.timeoutMs }),
         this.runner.run(["listorders", "--help"], { timeoutMs: 10_000 }),
         this.runner.run(["neworder", "--help"], { timeoutMs: 10_000 }),
         this.runner.run(["ordersinfo", "--help"], { timeoutMs: 10_000 }),
@@ -93,11 +105,20 @@ export class MostroService {
         this.runner.run(["getdmuser", "--help"], { timeoutMs: 10_000 }),
         this.runner.run(["senddm", "--help"], { timeoutMs: 10_000 })
       ]);
+      const capabilitiesEnvelope = parseMachineApiEnvelope(capabilitiesResult.stdout, machineCapabilitiesSchema);
+      const capabilities = capabilitiesEnvelope?.ok ? capabilitiesEnvelope.data : undefined;
+      if (!capabilities) {
+        warnings.push("El CLI funciona con compatibilidad básica, pero no expone la API para aplicaciones de Mostrico.");
+      } else if (capabilities.api_version !== 1) {
+        warnings.push(`La API para aplicaciones v${capabilities.api_version} no es compatible con esta versión de Mostrico.`);
+      }
       const supported = version.exitCode === 0 && helpChecks.every((result) => result.exitCode === 0);
       return {
         cliFound: true,
         cliVersion: version.stdout.trim(),
         supported,
+        machineApiVersion: capabilities?.api_version,
+        machineFeatures: capabilities?.features ?? [],
         mostroConfigured,
         relayCount,
         connection: mostroConfigured && relayCount > 0 ? "unknown" : "error",
@@ -108,6 +129,7 @@ export class MostroService {
         return {
           cliFound: false,
           supported: false,
+          machineFeatures: [],
           mostroConfigured,
           relayCount,
           connection: "error",
@@ -142,7 +164,7 @@ export class MostroService {
       }
       throw error;
     }
-    const order = parseOrderDetail(result.stdout) ?? parseOrders(result.stdout)[0];
+    const order = parseOrders(result.stdout).find((candidate) => candidate.id === orderId);
     if (!order) {
       if (cachedOrder) return this.unverifiedOrder(cachedOrder);
       throw new AppError("CLI_OUTPUT_UNRECOGNIZED", "No pudimos interpretar la oferta.");
@@ -334,12 +356,27 @@ export class MostroService {
   async addInvoice(input: { orderId: string; invoice: string }) {
     this.ensureConfigured();
     const command = addInvoiceCommand(input);
+    const trade = await getTrade(input.orderId);
+    const payout = isPayoutStep(trade?.lastKnownStep);
+    const seller = trade?.role === "maker" ? trade.kind === "sell" : trade?.kind === "buy";
+    if (trade?.payoutConfirmed || trade?.lastKnownStep === "canceled" || (payout && seller)) {
+      throw new AppError("ACTION_NOT_ALLOWED", "Esta operación no permite agregar una invoice de cobro.");
+    }
     const result = await this.runner.run(command.args, { timeoutMs: command.timeoutMs });
     this.ensureExitOk(result.exitCode, this.resultOutput(result));
-    await upsertTrade(input.orderId, { lastKnownStep: "waiting_for_lock" });
+    const invoiceUpdated = result.stdout.match(/^Order ID:\s*([0-9a-f-]{36})\r?\nInvoice updated successfully\./im)?.[1] === input.orderId;
+    if (payout && !invoiceUpdated) {
+      throw new AppError("CLI_OUTPUT_UNRECOGNIZED", "No recibimos la confirmación de la nueva invoice. Actualiza el estado antes de volver a enviarla.");
+    }
+    await upsertTrade(input.orderId, invoiceUpdated ? {
+      lastKnownStep: "waiting_for_payout",
+      payoutEventAt: Date.now()
+    } : { lastKnownStep: "waiting_for_lock" });
     clearCachedBondInvoice(input.orderId);
     return {
-      message: commandSucceeded(result.stdout, "**Invoice enviada**\n\nMostro recibió la solicitud. Actualiza la operación para confirmar el siguiente paso."),
+      message: invoiceUpdated
+        ? "Invoice actualizada. Mostro confirmó el reemplazo; el pago a tu wallet sigue pendiente."
+        : commandSucceeded(result.stdout, "**Invoice enviada**\n\nMostro recibió la solicitud. Actualiza la operación para confirmar el siguiente paso."),
       orderId: input.orderId
     };
   }
@@ -352,9 +389,55 @@ export class MostroService {
     return { message: "Índice de operaciones sincronizado. Ya puedes volver a intentar tomar la oferta." };
   }
 
+  async restoreSession() {
+    this.ensureConfigured();
+    const capabilities = await this.machineCapabilities();
+    if (!capabilities || capabilities.api_version !== 1 || !capabilities.features.includes("restore-persist")) {
+      throw new AppError(
+        "CLI_VERSION_UNSUPPORTED",
+        "Esta versión de mostro-cli no puede restaurar operaciones desde Mostrico.",
+        { title: "Actualiza el fork", hint: "Compila la rama del fork que incluye `mostro-cli api restore`." }
+      );
+    }
+
+    const command = machineRestoreCommand();
+    const result = await this.runner.run(command.args, { timeoutMs: command.timeoutMs });
+    const restored = this.requireMachineSuccess(
+      parseMachineApiEnvelope(result.stdout, machineRestoreSchema),
+      "No pudimos interpretar la restauración de mostro-cli."
+    );
+
+    const restoredOrderIds = new Set<string>();
+    for (const order of restored.orders) {
+      restoredOrderIds.add(order.order_id);
+      const local = await getTrade(order.order_id);
+      const step = this.restoredStep(order.status);
+      await upsertTrade(order.order_id, {
+        lastKnownStep: local?.payoutConfirmed ? "completed"
+          : step === "waiting_for_payout" && local?.lastKnownStep === "needs_payout_invoice" ? "needs_payout_invoice" : step,
+        ...(step === "completed" ? { payoutConfirmed: true } : {})
+      });
+    }
+    for (const dispute of restored.disputes) {
+      if (!restoredOrderIds.has(dispute.order_id)) {
+        await upsertTrade(dispute.order_id, { lastKnownStep: "disputed" });
+      }
+    }
+
+    return {
+      message: `Restauración completada: ${restored.persisted.orders} operación(es) y ${restored.persisted.disputes} disputa(s).`,
+      ...restored.persisted,
+      orderIds: restored.orders.map((order) => order.order_id)
+    };
+  }
+
   async messages(orderId: string, since = 30) {
     this.ensureConfigured();
-    const command = getDmCommand(since);
+    const beforeSync = await getTrade(orderId);
+    const syncStartedAt = Date.now();
+    const syncFrom = beforeSync?.lastMessageSyncAt ?? (beforeSync ? Date.parse(beforeSync.createdAt) : syncStartedAt);
+    const lookback = Number.isFinite(syncFrom) ? Math.ceil((syncStartedAt - syncFrom) / 60_000) + 2 : since;
+    const command = getDmCommand(Math.min(10080, Math.max(since, lookback)));
     const result = await this.runner.run(command.args, {
       timeoutMs: command.timeoutMs,
       preserveInvoices: true,
@@ -372,7 +455,7 @@ export class MostroService {
       await upsertTrade(orderId, { counterpartyPubkey: validatedPeer.data });
     }
     const exactEvents = events.filter((event) => event.orderId === orderId);
-    const readyForInvoice = exactEvents.some((event) => event.action === "AddInvoice");
+    const readyForInvoice = exactEvents.some((event) => event.action === "AddInvoice" && normalizeStatus(event.status) !== "settledholdinvoice");
     const readyForFiat = exactEvents.some((event) => event.action === "HoldInvoicePaymentAccepted");
     const fiatSentAccepted = hasContextualTradeEvent(events, orderId, "FiatSentOk");
     const paymentEvent = exactEvents
@@ -393,21 +476,41 @@ export class MostroService {
     }
 
     let step = trade?.lastKnownStep ?? "unknown";
-    if (bondEvent && !["waiting_for_lock", "ready_for_fiat", "fiat_marked_sent", "waiting_release", "completed", "canceled", "disputed"].includes(step)) {
+    if (bondEvent && !isPayoutStep(step) && !["waiting_for_lock", "ready_for_fiat", "fiat_marked_sent", "waiting_release", "completed", "canceled", "disputed"].includes(step)) {
       step = "waiting_for_bond";
     }
     if (paymentEvent && step === "waiting_for_bond") step = "waiting_for_lock";
     if (readyForInvoice && step === "waiting_for_bond") step = "needs_invoice";
-    if (readyForFiat && !["fiat_marked_sent", "waiting_release", "completed", "canceled", "disputed"].includes(step)) {
+    if (readyForFiat && !isPayoutStep(step) && !["fiat_marked_sent", "waiting_release", "completed", "canceled", "disputed"].includes(step)) {
       step = trade?.kind === "buy" && trade.role === "taker" ? "waiting_for_fiat" : "ready_for_fiat";
       if (trade?.kind === "buy" && trade.role === "taker") clearCachedPaymentInvoice(orderId);
     }
-    if (fiatSentAccepted && !["waiting_release", "completed", "canceled", "disputed"].includes(step)) {
+    if (fiatSentAccepted && !isPayoutStep(step) && !["waiting_release", "completed", "canceled", "disputed"].includes(step)) {
       step = "fiat_marked_sent";
     }
-    if (trade && step !== trade.lastKnownStep) {
-      await upsertTrade(orderId, { lastKnownStep: step });
+    let payout = reconcilePayout({ ...trade, lastKnownStep: step }, exactEvents);
+    if (isPayoutStep(payout.lastKnownStep) || (payout.lastKnownStep === "completed" && !payout.payoutConfirmed)) {
+      try {
+        // Older CLIs omit the order ID on PurchaseCompleted. Verify against this order's node snapshot.
+        const remote = await this.orderInfo(orderId);
+        if (remote.id === orderId && remote.verification === "verified") {
+          if (normalizeStatus(remote.status) === "success") {
+            payout = { ...payout, lastKnownStep: "completed", payoutConfirmed: true };
+          } else if (normalizeStatus(remote.status) === "settledholdinvoice" && !isPayoutStep(payout.lastKnownStep)) {
+            payout = { ...payout, lastKnownStep: "waiting_for_payout" };
+          }
+        }
+      } catch {
+        // A failed lookup cannot turn a pending payout into a completed trade.
+      }
     }
+    // A command may have finished while the network reads above were in flight.
+    const latest = await getTrade(orderId);
+    if ((latest?.payoutEventAt ?? 0) > (payout.payoutEventAt ?? 0) && !payout.payoutConfirmed) {
+      payout = reconcilePayout(latest ?? {}, exactEvents);
+    }
+    step = payout.lastKnownStep;
+    if (trade) await upsertTrade(orderId, { ...payout, lastMessageSyncAt: syncStartedAt });
 
     return {
       ...parseTradeMessages(redactSensitive(output), orderId),
@@ -418,7 +521,8 @@ export class MostroService {
         bondRequired: Boolean(bondInvoice) || trade?.lastKnownStep === "waiting_for_bond",
         bondInvoice,
         paymentInvoice,
-        readyForInvoice
+        readyForInvoice: !isPayoutStep(step) && readyForInvoice,
+        payoutSats: payout.payoutSats
       }
     };
   }
@@ -426,11 +530,42 @@ export class MostroService {
   async fiatSent(orderId: string) {
     this.ensureConfigured();
     const trade = await getTrade(orderId);
-    if (trade && ["fiat_marked_sent", "waiting_release", "completed"].includes(trade.lastKnownStep)) {
+    if (trade && (isPayoutStep(trade.lastKnownStep) || ["fiat_marked_sent", "waiting_release", "completed"].includes(trade.lastKnownStep))) {
       return {
         message: "**Pago fiat ya notificado**\n\nMostro ya recibió esta confirmación. No se volvió a enviar.",
         orderId,
         alreadyConfirmed: true
+      };
+    }
+
+    const capabilities = await this.machineCapabilities();
+    if (capabilities && capabilities.api_version !== 1) {
+      throw new AppError(
+        "CLI_VERSION_UNSUPPORTED",
+        `Mostrico no reconoce la API para aplicaciones v${capabilities.api_version} de mostro-cli.`
+      );
+    }
+
+    if (capabilities?.features.includes("fiat-sent")) {
+      const command = machineFiatSentCommand(orderId);
+      const result = await this.runner.run(command.args, { timeoutMs: command.timeoutMs });
+      const confirmation = this.requireMachineSuccess(
+        parseMachineApiEnvelope(result.stdout, machineFiatSentSchema),
+        "No pudimos confirmar la respuesta estructurada de mostro-cli."
+      );
+      if (confirmation.order_id !== orderId) {
+        throw new AppError("CLI_OUTPUT_UNRECOGNIZED", "mostro-cli confirmó una operación distinta a la solicitada.");
+      }
+      try {
+        await upsertTrade(orderId, { lastKnownStep: "fiat_marked_sent" });
+      } catch {
+        // Mostro already acknowledged the declaration; local persistence must not make it look retryable.
+      }
+      return {
+        message: "**Pago fiat confirmado**\n\nMostro respondió con `FiatSentOk` para esta operación.",
+        orderId,
+        acknowledged: true,
+        alreadyConfirmed: confirmation.already_acknowledged
       };
     }
 
@@ -574,11 +709,15 @@ export class MostroService {
 
   async releaseOrder(orderId: string) {
     this.ensureConfigured();
+    const trade = await getTrade(orderId);
+    if (isPayoutStep(trade?.lastKnownStep) || trade?.lastKnownStep === "completed") {
+      return { message: "La liberación ya fue registrada. No se volvió a enviar.", orderId };
+    }
     const command = releaseOrderCommand(orderId);
     const result = await this.runner.run(command.args, { timeoutMs: command.timeoutMs });
     this.ensureExitOk(result.exitCode, this.resultOutput(result));
-    await upsertTrade(orderId, { lastKnownStep: "completed" });
-    return { message: "Sats liberados al comprador.", orderId };
+    await upsertTrade(orderId, { lastKnownStep: "waiting_for_payout" });
+    return { message: "Liberación registrada. Falta la confirmación del pago a la wallet del comprador.", orderId };
   }
 
   private ensureExitOk(exitCode: number, output: string) {
@@ -586,6 +725,51 @@ export class MostroService {
       const message = output.trim() || "mostro-cli devolvió un error.";
       throw parseCliError(message);
     }
+  }
+
+  private async machineCapabilities() {
+    const command = machineCapabilitiesCommand();
+    const result = await this.runner.run(command.args, { timeoutMs: command.timeoutMs });
+    const envelope = parseMachineApiEnvelope(result.stdout, machineCapabilitiesSchema);
+    if (!envelope) return undefined;
+    if (!envelope.ok) throw this.machineApiError(envelope.error);
+    return envelope.data;
+  }
+
+  private requireMachineSuccess<T>(
+    envelope: MachineApiEnvelope<T> | undefined,
+    invalidMessage: string
+  ): T {
+    if (!envelope) throw new AppError("CLI_OUTPUT_UNRECOGNIZED", invalidMessage);
+    if (!envelope.ok) throw this.machineApiError(envelope.error);
+    return envelope.data;
+  }
+
+  private machineApiError(error: { code: string; message: string }) {
+    const codeByMachineError: Record<string, "ORDER_NOT_FOUND" | "NETWORK_ERROR" | "MOSTRO_REJECTED" | "CLI_EXIT_ERROR"> = {
+      ORDER_NOT_FOUND: "ORDER_NOT_FOUND",
+      NETWORK_ERROR: "NETWORK_ERROR",
+      MOSTRO_REJECTED: "MOSTRO_REJECTED",
+      CLI_ERROR: "CLI_EXIT_ERROR"
+    };
+    const code = codeByMachineError[error.code] ?? "CLI_EXIT_ERROR";
+    const messageByCode = {
+      ORDER_NOT_FOUND: "No encontramos la operación en la base local de mostro-cli.",
+      NETWORK_ERROR: "No recibimos respuesta de Mostro o de los relays.",
+      MOSTRO_REJECTED: "Mostro rechazó la acción solicitada.",
+      CLI_EXIT_ERROR: "mostro-cli no pudo completar la acción."
+    };
+    return new AppError(code, messageByCode[code], { reason: error.message });
+  }
+
+  private restoredStep(status: string) {
+    const normalized = normalizeStatus(status);
+    if (normalized === "fiatsent") return "fiat_marked_sent" as const;
+    if (normalized === "settledholdinvoice" || normalized === "settled") return "waiting_for_payout" as const;
+    if (normalized === "success" || normalized === "completed") return "completed" as const;
+    if (["canceled", "cancelled"].includes(normalized)) return "canceled" as const;
+    if (normalized?.includes("dispute")) return "disputed" as const;
+    return "unknown" as const;
   }
 
   private resultOutput(result: { stdout: string; stderr: string }) {

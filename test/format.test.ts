@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { formatAmountInput, formatFiatAmount, formatFiatRange, formatPercentage, normalizeFiatInput } from "@/lib/format";
+import { formatAmountInput, formatFiatAmount, formatFiatRange, formatNumber, formatPercentage, normalizeFiatInput } from "@/lib/format";
 
 describe("number formatting", () => {
+  it("groups whole satoshi amounts without adding decimal places", () => {
+    expect(formatNumber(2224, 0)).toBe("2.224");
+    expect(formatNumber(1234567, 0)).toBe("1.234.567");
+    expect(formatNumber(0, 0)).toBe("0");
+  });
+
   it("formats fiat values with Colombian separators and a currency code", () => {
     expect(formatFiatAmount("50000", "COP")).toBe("50.000 COP");
     expect(formatFiatAmount("1234.50", "USD")).toBe("1.234,50 USD");

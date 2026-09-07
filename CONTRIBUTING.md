@@ -36,6 +36,8 @@ Los tests E2E levantan Next.js en `127.0.0.1:3100` con `MOSTRO_WEB_MOCK_CLI=1`, 
 - Mantén Mostrico como app local-only.
 - No leas ni devuelvas secretos del usuario al navegador.
 - No ejecutes comandos arbitrarios; usa constructores de argumentos allowlisted.
+- Trata `mostro-cli api capabilities` como negociación del contrato. No uses una función del API si no fue anunciada.
+- Valida los envelopes JSON y su `schema_version`; después de invocar una acción mutante del API no reintentes con el comando humano.
 - Redacta invoices, claves, mnemonics y salidas crudas sensibles antes de mostrarlas.
 - Abre `~/.mcli/mcli.db` solo en modo lectura cuando el chat necesite resolver la contraparte.
 - Nunca hagas pagos Lightning ni transferencias fiat desde la app.
@@ -46,6 +48,7 @@ Antes de pedir revisión, revisa que:
 
 - La UI siga en español y sea clara para una operación P2P.
 - Los errores de `mostro-cli` se presenten como mensajes seguros y accionables.
+- Los cambios al API para aplicaciones incluyan pruebas de éxito, error estructurado y compatibilidad con el CLI oficial.
 - Las acciones destructivas tengan confirmación explícita.
 - README, `.env.example` o `docs/` estén actualizados si cambia configuración o comportamiento.
 - GitHub Actions pasen o expliques cualquier falla reproducible.

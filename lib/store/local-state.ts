@@ -44,6 +44,20 @@ async function writeState(state: LocalState) {
 export async function upsertTrade(orderId: string, metadata: Partial<LocalTradeMetadata>) {
   let updated: LocalTradeMetadata | undefined;
   await mutateState((state) => {
+    const previous = state.trades[orderId];
+    // A delayed poll must not reopen a replaced invoice or a confirmed payment.
+    if (previous?.payoutConfirmed || (
+      !metadata.payoutConfirmed && metadata.payoutEventAt !== undefined
+      && (previous?.payoutEventAt ?? 0) > metadata.payoutEventAt
+    )) {
+      metadata = {
+        ...metadata,
+        lastKnownStep: previous.lastKnownStep,
+        payoutEventAt: previous.payoutEventAt,
+        payoutSats: previous.payoutSats,
+        payoutConfirmed: previous.payoutConfirmed
+      };
+    }
     state.trades[orderId] = {
       createdAt: metadata.createdAt ?? state.trades[orderId]?.createdAt ?? new Date().toISOString(),
       currency: metadata.currency ?? state.trades[orderId]?.currency ?? "COP",
@@ -56,6 +70,10 @@ export async function upsertTrade(orderId: string, metadata: Partial<LocalTradeM
       expirationDays: metadata.expirationDays ?? state.trades[orderId]?.expirationDays,
       counterpartyPubkey: metadata.counterpartyPubkey ?? state.trades[orderId]?.counterpartyPubkey,
       chatMessages: metadata.chatMessages ?? state.trades[orderId]?.chatMessages,
+      payoutSats: metadata.payoutSats ?? state.trades[orderId]?.payoutSats,
+      payoutEventAt: metadata.payoutEventAt ?? state.trades[orderId]?.payoutEventAt,
+      payoutConfirmed: metadata.payoutConfirmed ?? state.trades[orderId]?.payoutConfirmed,
+      lastMessageSyncAt: metadata.lastMessageSyncAt ?? state.trades[orderId]?.lastMessageSyncAt,
       lastKnownStep: metadata.lastKnownStep ?? state.trades[orderId]?.lastKnownStep ?? "unknown"
     };
     updated = state.trades[orderId];
