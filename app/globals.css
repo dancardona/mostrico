@@ -65,7 +65,9 @@ select {
 @layer components {
   .ds-shell { @apply mx-auto max-w-6xl px-4 pb-16 pt-10; }
   .ds-nav { @apply sticky top-0 z-20 border-b border-line bg-paper/95 backdrop-blur; }
-  .ds-nav-inner { @apply mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-3; }
+  .ds-nav-inner { @apply mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-3; }
+  .ds-nav-brand { @apply focus-ring flex min-h-10 shrink-0 items-center gap-2 text-lg font-semibold text-ink; }
+  .ds-nav-links { @apply flex shrink-0 items-center gap-0.5; }
   .ds-nav-link { @apply focus-ring inline-flex min-h-10 min-w-10 items-center justify-center gap-2 rounded-md px-2 text-xs text-muted transition-colors hover:bg-raised hover:text-ink sm:px-3; }
   .ds-nav-link[aria-current="page"] { @apply bg-accent/10 text-accent; }
   .ds-page-header { @apply mb-8 flex flex-wrap items-center justify-between gap-5; }
@@ -110,6 +112,9 @@ svg { flex-shrink: 0; }
   .ds-page-description { font-size: 13px; }
 }
 @media (max-width: 380px) {
+  .ds-nav-brand { gap: 6px; font-size: 16px; }
+  .ds-nav-brand img { width: 32px; height: 32px; }
+  .ds-nav-links { gap: 0; }
   .ds-data-list { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) {

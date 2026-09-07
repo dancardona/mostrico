@@ -4,9 +4,11 @@ export default defineConfig({
   testDir: "./e2e",
   globalSetup: "./e2e/global-setup.ts",
   timeout: 30_000,
+  reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL: "http://127.0.0.1:3100",
-    trace: "on-first-retry"
+    trace: "retain-on-failure",
+    screenshot: "only-on-failure"
   },
   webServer: {
     command: "npm run dev -- --port 3100",

@@ -64,6 +64,32 @@ test("shared navigation is accessible on mobile and marks the current route", as
   await expect(page.getByRole("heading", { name: "Setup local" })).toBeVisible();
 });
 
+test("compact navigation fits wider fallback fonts without clipping links", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.goto("/orders/new");
+  // Linux system fonts are wider than the macOS font used by local runs.
+  await page.addStyleTag({ content: ".ds-nav { font-family: monospace; }" });
+  const nav = page.getByRole("navigation", { name: "Navegación principal" });
+  const links = nav.getByRole("link");
+  await expect(links).toHaveCount(5);
+  const boxes = await links.evaluateAll((elements) => elements.map((element) => {
+    const { left, right, top, bottom, width, height } = element.getBoundingClientRect();
+    return { left, right, top, bottom, width, height };
+  }));
+  for (const box of boxes) {
+    expect(box.left).toBeGreaterThanOrEqual(16);
+    expect(box.right).toBeLessThanOrEqual(304);
+    expect(box.height).toBeGreaterThanOrEqual(40);
+  }
+  for (let index = 1; index < boxes.length; index++) {
+    expect(boxes[index].width).toBeGreaterThanOrEqual(40);
+    expect(boxes[index].left >= boxes[index - 1].right || boxes[index].top >= boxes[index - 1].bottom).toBe(true);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await nav.getByRole("link", { name: "Inicio", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Mostrico", exact: true })).toBeVisible();
+});
+
 test("range and price controls retain formatting and explicit confirmation", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 320, height: 844 });
   await page.goto("/orders/new");
