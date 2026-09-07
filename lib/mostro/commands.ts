@@ -140,6 +140,44 @@ export function syncTradeIndexCommand(): CommandSpec {
   };
 }
 
+export function machineCapabilitiesCommand(): CommandSpec {
+  return {
+    action: "api-capabilities",
+    args: ["api", "capabilities"],
+    timeoutMs: 10_000,
+    mutating: false
+  };
+}
+
+export function machineTradeStatusCommand(orderId: string): CommandSpec {
+  const id = uuidSchema.parse(orderId);
+  return {
+    action: "api-trade-status",
+    args: ["api", "trade-status", "-o", id],
+    timeoutMs: 15_000,
+    mutating: false
+  };
+}
+
+export function machineFiatSentCommand(orderId: string): CommandSpec {
+  const id = uuidSchema.parse(orderId);
+  return {
+    action: "api-fiat-sent",
+    args: ["api", "fiat-sent", "-o", id],
+    timeoutMs: 60_000,
+    mutating: true
+  };
+}
+
+export function machineRestoreCommand(): CommandSpec {
+  return {
+    action: "api-restore",
+    args: ["api", "restore"],
+    timeoutMs: 60_000,
+    mutating: true
+  };
+}
+
 export function fiatSentCommand(orderId: string): CommandSpec {
   const id = uuidSchema.parse(orderId);
   return { action: "fiatsent", args: ["fiatsent", "-o", id], timeoutMs: 45_000, mutating: true };

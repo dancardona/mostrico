@@ -142,7 +142,7 @@ export const newOrderInputSchema = z.object({
 
 export type NewOrderInput = z.infer<typeof newOrderInputSchema>;
 
-export const sinceSchema = z.coerce.number().int().min(1).max(1440).default(30);
+export const sinceSchema = z.coerce.number().int().min(1).max(10080).default(30);
 
 export const fiatSentInputSchema = z.object({
   confirmedActualFiatTransfer: z.literal(true)

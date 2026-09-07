@@ -50,6 +50,8 @@ export type LocalTradeStep =
   | "ready_for_fiat"
   | "fiat_marked_sent"
   | "waiting_release"
+  | "waiting_for_payout"
+  | "needs_payout_invoice"
   | "completed"
   | "canceled"
   | "disputed"
@@ -67,6 +69,10 @@ export interface LocalTradeMetadata {
   expirationDays?: number;
   counterpartyPubkey?: string;
   chatMessages?: ChatMessage[];
+  payoutSats?: number;
+  payoutEventAt?: number;
+  payoutConfirmed?: boolean;
+  lastMessageSyncAt?: number;
   lastKnownStep: LocalTradeStep;
 }
 
@@ -102,12 +108,15 @@ export interface TradeLifecycleStatus {
   bondInvoice?: string;
   paymentInvoice?: string;
   readyForInvoice: boolean;
+  payoutSats?: number;
 }
 
 export interface Diagnostics {
   cliFound: boolean;
   cliVersion?: string;
   supported: boolean;
+  machineApiVersion?: number;
+  machineFeatures: string[];
   mostroConfigured: boolean;
   relayCount: number;
   connection?: "ok" | "error" | "unknown";

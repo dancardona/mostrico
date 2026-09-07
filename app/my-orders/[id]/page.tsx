@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { Ban, CheckCircle2, RefreshCw, Send, Unlock } from "lucide-react";
-import { Button, Card, ErrorNotice, Notice, type ApiErrorData } from "@/components/ui";
+import Link from "next/link";
+import { ArrowRight, Ban, CheckCircle2, RefreshCw, Send, Unlock } from "lucide-react";
+import { isPayoutStep } from "@/lib/mostro/payout";
+import { Button, Section, PageHeader, DataField, ErrorNotice, Notice, type ApiErrorData } from "@/components/ui";
 import { TradeChat } from "@/components/trade-chat";
 import { formatFiatAmount, formatFiatRange, formatNumber, formatPercentage } from "@/lib/format";
 import type { LocalTradeMetadata, LocalTradeStep, TradeLifecycleStatus, TradeMessage } from "@/lib/mostro/types";
@@ -72,10 +74,11 @@ export default function MyOrderPage() {
     await load();
   }
 
-  if (loading && !order) return <Card>Cargando orden...</Card>;
+  if (loading && !order) return <Section>Cargando orden...</Section>;
 
-  const closed = order?.lastKnownStep === "canceled" || order?.lastKnownStep === "completed";
   const effectiveStep = lifecycleStep === "unknown" ? order?.lastKnownStep : lifecycleStep;
+  const payoutPending = isPayoutStep(effectiveStep);
+  const closed = effectiveStep === "canceled" || effectiveStep === "completed" || payoutPending;
   const fiatAlreadySent = effectiveStep ? ["fiat_marked_sent", "waiting_release", "completed"].includes(effectiveStep) : false;
   const canMarkFiatSent = effectiveStep === "ready_for_fiat";
   const fiatValue = order?.selectedFiatAmount?.includes("-")
@@ -84,37 +87,32 @@ export default function MyOrderPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium text-accent">Orden propia</p>
-          <h1 className="mt-1 text-3xl font-bold">{order?.kind === "sell" ? "Venta de Bitcoin" : "Compra de Bitcoin"}</h1>
-          <p className="mt-2 break-all text-ink/70">{orderId}</p>
-        </div>
+      <PageHeader title={order?.kind === "sell" ? "Venta de Bitcoin" : "Compra de Bitcoin"} eyebrow="Mostro / Orden propia" identifier={orderId} actions={
         <Button className="border border-line bg-panel hover:border-accent" disabled={loading} onClick={load}>
           <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
           Actualizar
         </Button>
-      </div>
+      } />
 
       {error && <ErrorNotice error={error} />}
       {notice && <Notice tone="ok">{notice}</Notice>}
 
       {order && (
-        <div className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
+        <div className="ds-split">
           <div className="space-y-5">
-            <Card>
+            <Section>
               <h2 className="font-semibold">Resumen</h2>
-              <dl className="mt-4 grid grid-cols-2 gap-4 text-sm">
-                <Field label="Tipo" value={order.kind === "sell" ? "Vender BTC" : "Comprar BTC"} />
-                <Field label="Estado local" value={statusLabel(order.lastKnownStep)} />
-                <Field label="Fiat" value={fiatValue} />
-                <Field label="Sats" value={order.satsAmount === "0" ? "Precio de mercado" : `${formatNumber(order.satsAmount, 0)} sats`} />
-                <Field label="Premium" value={formatPercentage(order.premiumPct)} />
-                <Field label="Métodos" value={order.paymentMethods?.join(", ")} />
+              <dl className="ds-data-list mt-4">
+                <DataField label="Tipo" value={order.kind === "sell" ? "Vender BTC" : "Comprar BTC"} />
+                <DataField label="Estado local" value={statusLabel(order.lastKnownStep)} />
+                <DataField label="Fiat" value={fiatValue} />
+                <DataField label="Sats" value={order.satsAmount === "0" ? "Precio de mercado" : `${formatNumber(order.satsAmount, 0)} sats`} />
+                <DataField label="Premium" value={formatPercentage(order.premiumPct)} />
+                <DataField className="col-span-full" label="Métodos" value={order.paymentMethods?.join(", ")} />
               </dl>
-            </Card>
+            </Section>
 
-            <Card>
+            <Section>
               <h2 className="font-semibold">Secuencia</h2>
               <ol className="mt-4 space-y-3 text-sm">
                 {(order.kind === "sell"
@@ -127,24 +125,30 @@ export default function MyOrderPage() {
                   </li>
                 ))}
               </ol>
-            </Card>
+            </Section>
           </div>
 
-          <div className="space-y-5">
-            <Card>
+          <div className="ds-rail space-y-5">
+            <Section>
               <h2 className="font-semibold">Mensajes recientes de Mostro</h2>
               <div className="mt-4 space-y-3">
                 {messages.length === 0 && <p className="text-sm text-ink/60">Todavía no hay mensajes asociados de forma segura a esta orden.</p>}
                 {messages.map((message) => (
-                  <article key={message.id} className="rounded border border-line bg-paper p-3 text-sm">
+                  <article key={message.id} className="border-l-2 border-line py-2 pl-4 text-sm">
                     {message.timestamp && <p className="mb-1 text-xs text-ink/45">{message.timestamp}</p>}
                     <p className="break-words">{message.text}</p>
                   </article>
                 ))}
               </div>
-            </Card>
+            </Section>
 
             <TradeChat orderId={orderId} />
+
+            {payoutPending && <Notice>
+              <p className="font-semibold">{statusLabel(effectiveStep!)}</p>
+              <p className="mt-2 text-sm">La liberación está registrada. El pago a la wallet del comprador sigue pendiente.</p>
+              <Link href={`/trades/${orderId}`} className="focus-ring mt-3 inline-flex items-center gap-2 text-sm text-accent">Ver cobro pendiente <ArrowRight size={16} /></Link>
+            </Notice>}
 
             {!closed && order.kind === "buy" && fiatAlreadySent && (
               <Notice tone="ok">
@@ -154,13 +158,13 @@ export default function MyOrderPage() {
             )}
 
             {!closed && order.kind === "buy" && !fiatAlreadySent && (
-              <Card className="space-y-5">
+              <Section className="space-y-5">
                 <h2 className="flex items-center gap-2 font-semibold"><Send size={18} /> Confirmar pago fiat</h2>
                 <p className="text-sm text-ink/70">Esta acción solo notifica a Mostro. Debes haber realizado la transferencia fuera de la aplicación.</p>
                 {!canMarkFiatSent && (
                   <Notice tone="warning">Espera a que Mostro confirme que los sats están asegurados antes de transferir y notificar el pago fiat.</Notice>
                 )}
-                <label className="flex items-start gap-3 rounded border border-line/70 bg-paper/50 p-4 text-sm leading-6">
+                <label className="ds-confirmation">
                   <input className="mt-1.5" type="checkbox" disabled={!canMarkFiatSent} checked={fiatChecked} onChange={(event) => setFiatChecked(event.target.checked)} />
                   Confirmo que ya envié el pago fiat.
                 </label>
@@ -168,37 +172,37 @@ export default function MyOrderPage() {
                   {acting === "fiat" ? <RefreshCw size={18} className="animate-spin" /> : <CheckCircle2 size={18} />}
                   Marcar fiat como enviado
                 </Button>
-              </Card>
+              </Section>
             )}
 
             {!closed && order.kind === "sell" && (
-              <Card className="space-y-5 border-bitcoin/30">
+              <Section className="space-y-5 border-bitcoin/30">
                 <h2 className="flex items-center gap-2 font-semibold"><Unlock size={18} /> Liberar sats</h2>
                 <p className="text-sm text-ink/70">Libera únicamente después de comprobar en tu cuenta que el fiat fue recibido de forma irreversible.</p>
-                <label className="flex items-start gap-3 rounded border border-bitcoin/25 bg-paper/50 p-4 text-sm leading-6">
+                <label className="ds-confirmation border-bitcoin/25">
                   <input className="mt-1.5" type="checkbox" checked={releaseChecked} onChange={(event) => setReleaseChecked(event.target.checked)} />
                   Confirmo que recibí y verifiqué el pago fiat.
                 </label>
-                <Button className="bg-bitcoin text-paper hover:bg-[#d87d13]" disabled={!releaseChecked || Boolean(acting)} onClick={() => post("release", `/api/my-orders/${orderId}/release`, { confirmedFiatReceived: true })}>
+                <Button className="bg-bitcoin text-paper hover:bg-bitcoin/80" disabled={!releaseChecked || Boolean(acting)} onClick={() => post("release", `/api/my-orders/${orderId}/release`, { confirmedFiatReceived: true })}>
                   {acting === "release" ? <RefreshCw size={18} className="animate-spin" /> : <Unlock size={18} />}
                   Liberar sats
                 </Button>
-              </Card>
+              </Section>
             )}
 
             {!closed && (
-              <Card className="space-y-5 border-danger/30">
+              <Section className="space-y-5 border-danger/30">
                 <h2 className="flex items-center gap-2 font-semibold text-danger"><Ban size={18} /> Cancelar orden pendiente</h2>
                 <p className="text-sm text-ink/70">Mostro solo permite cancelar mientras la orden continúa pendiente y no tiene contraparte activa.</p>
-                <label className="flex items-start gap-3 rounded border border-danger/25 bg-paper/50 p-4 text-sm leading-6">
+                <label className="ds-confirmation border-danger/25">
                   <input className="mt-1.5" type="checkbox" checked={cancelChecked} onChange={(event) => setCancelChecked(event.target.checked)} />
                   Confirmo que quiero cancelar esta orden.
                 </label>
-                <Button className="bg-danger text-white hover:bg-[#b5413d]" disabled={!cancelChecked || Boolean(acting)} onClick={() => post("cancel", `/api/my-orders/${orderId}/cancel`, { confirmed: true })}>
+                <Button className="bg-danger text-paper hover:bg-danger/80" disabled={!cancelChecked || Boolean(acting)} onClick={() => post("cancel", `/api/my-orders/${orderId}/cancel`, { confirmed: true })}>
                   {acting === "cancel" ? <RefreshCw size={18} className="animate-spin" /> : <Ban size={18} />}
                   Cancelar orden
                 </Button>
-              </Card>
+              </Section>
             )}
           </div>
         </div>
@@ -218,19 +222,12 @@ function statusLabel(status: LocalTradeMetadata["lastKnownStep"]) {
     ready_for_fiat: "Lista para pago fiat",
     fiat_marked_sent: "Fiat marcado como enviado",
     waiting_release: "Esperando liberación",
+    waiting_for_payout: "Cobro pendiente",
+    needs_payout_invoice: "Requiere nueva invoice de cobro",
     completed: "Completada",
     canceled: "Cancelada",
     disputed: "En disputa",
     unknown: "Sin confirmar"
   };
   return labels[status];
-}
-
-function Field({ label, value }: { label: string; value?: string }) {
-  return (
-    <div>
-      <dt className="text-ink/50">{label}</dt>
-      <dd className="mt-1 font-medium">{value || "No disponible"}</dd>
-    </div>
-  );
 }

@@ -3,6 +3,20 @@ import { AlertTriangle } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { formatAmountInput } from "@/lib/format";
 
+export function PageHeader({ title, eyebrow = "Mostro / P2P", description, identifier, actions }: {
+  title: string; eyebrow?: string; description?: React.ReactNode; identifier?: string; actions?: React.ReactNode;
+}) {
+  return <header className="ds-page-header"><div><p className="ds-eyebrow">{eyebrow}</p><h1 className="ds-page-title">{title}</h1>{description && <div className="ds-page-description">{description}</div>}{identifier && <p className="ds-page-id">{identifier}</p>}</div>{actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}</header>;
+}
+
+export function Section({ className, ...props }: React.HTMLAttributes<HTMLElement>) {
+  return <section className={clsx("ds-section", className)} {...props} />;
+}
+
+export function DataField({ label, value, className }: { label: string; value?: React.ReactNode; className?: string }) {
+  return <div className={clsx("ds-field", className)}><dt>{label}</dt><dd>{value === "" || value == null ? "No disponible" : value}</dd></div>;
+}
+
 export interface ApiErrorData {
   code: string;
   message: string;
@@ -14,14 +28,14 @@ export interface ApiErrorData {
 }
 
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={clsx("rounded border border-line bg-panel p-5 shadow-soft sm:p-6", className)} {...props} />;
+  return <div className={clsx("min-w-0 rounded-md border border-line bg-panel p-5", className)} {...props} />;
 }
 
 export function Button({ className, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       className={clsx(
-        "focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded px-4 py-2 font-semibold disabled:cursor-not-allowed disabled:opacity-50",
+        "ds-button",
         className
       )}
       {...props}
@@ -30,7 +44,7 @@ export function Button({ className, ...props }: React.ButtonHTMLAttributes<HTMLB
 }
 
 export function TextInput({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={clsx("focus-ring min-h-11 w-full rounded border border-line bg-paper px-3 py-2 text-ink placeholder:text-ink/35", className)} {...props} />;
+  return <input className={clsx("ds-input", className)} {...props} />;
 }
 
 interface AmountInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "onChange" | "value"> {
@@ -44,7 +58,7 @@ export function AmountInput({ allowDecimals = false, className, onValueChange, s
   return (
     <div className="relative">
       <input
-        className={clsx("focus-ring min-h-11 w-full rounded border border-line bg-paper px-3 py-2 text-ink placeholder:text-ink/35", suffix && "pr-20", className)}
+        className={clsx("ds-input", suffix && "pr-16", className)}
         inputMode={allowDecimals ? "decimal" : "numeric"}
         value={value}
         onChange={(event) => {
@@ -59,7 +73,7 @@ export function AmountInput({ allowDecimals = false, className, onValueChange, s
 }
 
 export function TextArea({ className, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className={clsx("focus-ring min-h-28 w-full rounded border border-line bg-paper px-3 py-2 text-ink placeholder:text-ink/35", className)} {...props} />;
+  return <textarea className={clsx("ds-input min-h-28", className)} {...props} />;
 }
 
 interface NoticeProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -68,13 +82,13 @@ interface NoticeProps extends React.HTMLAttributes<HTMLDivElement> {
 
 export function Notice({ children, className, tone = "neutral", ...props }: NoticeProps) {
   const styles = {
-    neutral: "border-line bg-paper text-ink/75",
-    warning: "border-bitcoin/40 bg-[#332b22] text-ink",
-    danger: "border-danger/35 bg-[#38252a] text-[#ffaaa6]",
-    ok: "border-accent/35 bg-[#253326] text-[#b8e86c]"
+    neutral: "border-line bg-panel text-muted",
+    warning: "border-bitcoin/60 bg-[var(--surface-warning)] text-ink",
+    danger: "border-danger/60 bg-[var(--surface-danger)] text-danger",
+    ok: "border-accent/60 bg-[var(--surface-success)] text-accent"
   };
   return (
-    <div className={clsx("rounded border p-4 text-sm leading-6 sm:px-5 sm:py-4", styles[tone], className)} {...props}>
+    <div className={clsx("min-w-0 border-l-2 p-4 text-[13px] leading-6 [overflow-wrap:anywhere]", styles[tone], className)} {...props}>
       {children}
     </div>
   );

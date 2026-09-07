@@ -6,6 +6,10 @@ import {
   fiatSentCommand,
   getDmUserCommand,
   listOrdersCommand,
+  machineCapabilitiesCommand,
+  machineFiatSentCommand,
+  machineRestoreCommand,
+  machineTradeStatusCommand,
   newOrderCommand,
   orderInfoCommand,
   rateCommand,
@@ -35,6 +39,10 @@ describe("Mostro command construction", () => {
     expect(rateCommand(orderId, 5).args).toEqual(["rate", "-o", orderId, "-r", "5"]);
     expect(disputeCommand(orderId).args).toEqual(["dispute", "-o", orderId]);
     expect(syncTradeIndexCommand().args).toEqual(["getlasttradeindex"]);
+    expect(machineCapabilitiesCommand().args).toEqual(["api", "capabilities"]);
+    expect(machineTradeStatusCommand(orderId).args).toEqual(["api", "trade-status", "-o", orderId]);
+    expect(machineFiatSentCommand(orderId).args).toEqual(["api", "fiat-sent", "-o", orderId]);
+    expect(machineRestoreCommand().args).toEqual(["api", "restore"]);
     expect(getDmUserCommand({ orderId, pubkey: "1".repeat(64), since: 120 }).args).toEqual([
       "getdmuser", "-p", "1".repeat(64), "-o", orderId, "--since", "120"
     ]);
@@ -63,6 +71,8 @@ describe("Mostro command construction", () => {
     for (const bad of ["uuid; rm -rf /", "$(whoami)", "\"`touch /tmp/x`\""]) {
       expect(() => orderInfoCommand(bad)).toThrow();
       expect(() => fiatSentCommand(bad)).toThrow();
+      expect(() => machineFiatSentCommand(bad)).toThrow();
+      expect(() => machineTradeStatusCommand(bad)).toThrow();
       expect(() => sendDmCommand({ orderId: bad, pubkey: "1".repeat(64), message: "hola" })).toThrow();
     }
   });

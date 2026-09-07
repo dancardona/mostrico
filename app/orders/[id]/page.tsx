@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowRight, Check, FileText, RefreshCw } from "lucide-react";
-import { AmountInput, Button, Card, ErrorNotice, Notice, TextArea, type ApiErrorData } from "@/components/ui";
+import { AmountInput, Button, Section, PageHeader, DataField, ErrorNotice, Notice, TextArea, type ApiErrorData } from "@/components/ui";
 import { formatFiatAmount, formatFiatRange, formatNumber, formatPercentage, normalizeFiatInput } from "@/lib/format";
 import type { MostroOrder } from "@/lib/mostro/types";
 
@@ -102,20 +102,16 @@ export default function OrderPage() {
     return `Entre ${formatFiatAmount(order.minFiatAmount, order.currency)} y ${formatFiatAmount(order.maxFiatAmount, order.currency)}`;
   }, [order]);
 
-  if (loading) return <Card>Cargando oferta...</Card>;
+  if (loading) return <Section>Cargando oferta...</Section>;
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold">Tomar oferta</h1>
-          <p className="mt-2 break-all text-ink/70">{orderId}</p>
-        </div>
+      <PageHeader title="Tomar oferta" eyebrow="Mostro / Mercado" identifier={orderId} actions={
         <Button onClick={load} className="border border-line bg-panel hover:border-accent">
           <RefreshCw size={18} />
           Actualizar
         </Button>
-      </div>
+      } />
 
       {error && (
         <ErrorNotice error={error}>
@@ -140,20 +136,20 @@ export default function OrderPage() {
       )}
 
       {order && (
-        <div className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
-          <Card>
+        <div className="ds-split">
+          <Section>
             <h2 className="font-semibold">Detalle</h2>
-            <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-              <Field label="Moneda" value={order.currency} />
-              <Field label="Fiat" value={order.fiatAmount ? formatFiatAmount(order.fiatAmount, order.currency) : formatFiatRange(order.minFiatAmount, order.maxFiatAmount, order.currency)} />
-              <Field label="Sats" value={formatNumber(order.sats, 0)} />
-              <Field label="Premium" value={formatPercentage(order.premiumPct)} />
-              <Field label="Métodos" value={order.paymentMethods.join(", ")} />
-              <Field label="Estado" value={order.status} />
+            <dl className="ds-data-list mt-4">
+              <DataField label="Moneda" value={order.currency} />
+              <DataField label="Fiat" value={order.fiatAmount ? formatFiatAmount(order.fiatAmount, order.currency) : formatFiatRange(order.minFiatAmount, order.maxFiatAmount, order.currency)} />
+              <DataField label="Sats" value={formatNumber(order.sats, 0)} />
+              <DataField label="Premium" value={formatPercentage(order.premiumPct)} />
+              <DataField label="Estado" value={order.status} />
+              <DataField className="col-span-full" label="Métodos" value={order.paymentMethods.join(", ")} />
             </dl>
-          </Card>
+          </Section>
 
-          <Card className="space-y-7">
+          <Section className="ds-rail space-y-7">
             <section className="border-b border-line/60 pb-7">
               <div className="mb-4 flex items-center gap-2 font-semibold"><span className="grid h-7 w-7 place-items-center rounded bg-accent text-sm text-paper">1</span> Monto</div>
               {needsAmount ? (
@@ -172,8 +168,8 @@ export default function OrderPage() {
               <section className="border-b border-line/60 pb-7">
                 <div className="mb-4 flex items-center gap-2 font-semibold"><span className="grid h-7 w-7 place-items-center rounded bg-accent text-sm text-paper">2</span> Invoice Lightning</div>
                 <p className="mb-4 text-sm leading-6 text-ink/70">Esta factura Lightning es donde recibirás los sats cuando el vendedor libere la operación.</p>
-                <TextArea value={invoice} onChange={(event) => setInvoice(event.target.value)} disabled={deferInvoice} placeholder="lnbc..." />
-                <label className="mt-4 flex items-center gap-3 rounded border border-line/70 bg-paper/50 p-4 text-sm leading-6">
+                <TextArea aria-label="Invoice Lightning" value={invoice} onChange={(event) => setInvoice(event.target.value)} disabled={deferInvoice} placeholder="lnbc..." />
+                <label className="ds-confirmation mt-4">
                   <input type="checkbox" checked={deferInvoice} onChange={(event) => setDeferInvoice(event.target.checked)} />
                   Agregar invoice después
                 </label>
@@ -182,7 +178,7 @@ export default function OrderPage() {
 
             <section>
               <div className="mb-4 flex items-center gap-2 font-semibold"><FileText size={18} /> Revisión</div>
-              <div className="space-y-2 rounded border border-line bg-paper p-4 text-sm leading-6 sm:p-5">
+              <div className="space-y-2 border-y border-line py-4 text-sm leading-6">
                 <p><strong>Oferta:</strong> <span className="break-all">{orderId}</span></p>
                 <p><strong>Monto fiat:</strong> {selectedAmount ? formatFiatAmount(selectedAmount, order.currency) : "Pendiente"}</p>
                 <p><strong>Tu rol:</strong> {isBuyOffer ? "Vendedor de sats" : "Comprador de sats"}</p>
@@ -193,7 +189,7 @@ export default function OrderPage() {
                   ? "Tomar la oferta inicia la operación, pero no bloquea sats automáticamente. Mostro te entregará una hold invoice para pagar desde tu wallet."
                   : "Tomar la oferta inicia la operación, pero no envía dinero fiat."}
               </Notice>
-              <label className="mt-5 flex items-start gap-3 rounded border border-line/70 bg-paper/50 p-4 text-sm leading-6">
+              <label className="ds-confirmation mt-5">
                 <input className="mt-1.5" type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
                 Confirmo que quiero tomar esta oferta como {isBuyOffer ? "vendedor" : "comprador"}.
               </label>
@@ -203,18 +199,9 @@ export default function OrderPage() {
                 <ArrowRight size={18} />
               </Button>
             </section>
-          </Card>
+          </Section>
         </div>
       )}
-    </div>
-  );
-}
-
-function Field({ label, value }: { label: string; value?: string }) {
-  return (
-    <div>
-      <dt className="text-ink/50">{label}</dt>
-      <dd className="mt-1 font-medium">{value || "No disponible"}</dd>
     </div>
   );
 }

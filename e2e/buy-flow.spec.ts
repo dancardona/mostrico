@@ -16,22 +16,26 @@ test("buyer can take a COP sell order and guard fiat sent", async ({ page }) => 
   await page.getByRole("button", { name: /Tomar oferta/ }).click();
   await page.waitForURL("**/trades/11111111-1111-4111-8111-111111111111?bond=pending&invoice=pending", { timeout: 15_000 });
 
-  await expect(page.getByRole("heading", { name: "Operación" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Operación", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Garantía anti-abuso" })).toBeVisible();
-  await expect(page.getByLabel("Invoice de garantía anti-abuso")).toHaveValue(/^lnbc/);
-  await expect(page.getByText(/Paga primero la garantía/)).toBeVisible();
+  await expect(page.getByRole("img", { name: "QR: Invoice de garantía anti-abuso" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Agregar invoice" })).toHaveCount(0);
   await page.getByLabel(/Confirmo que pagué o inicié el pago/).check();
+  await page.getByRole("button", { name: "Continuar con mi invoice" }).click();
+  await expect(page.getByText(/Garantía pendiente de confirmación/)).toBeVisible();
   await page.getByPlaceholder("lnbc...").fill("lnbc1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3qpp5qqqsyqcyq5rqwzqfka");
   await page.getByRole("button", { name: "Agregar invoice" }).click();
   await expect(page.getByText("Invoice Lightning agregada", { exact: true }).last()).toBeVisible();
   await expect(page.getByRole("button", { name: "Agregar invoice" })).toHaveCount(0);
 
+  await page.getByRole("button", { name: /^Abrir chat/ }).click();
   await page.getByPlaceholder("npub1... o 64 caracteres hex").fill("1".repeat(64));
   await page.getByRole("button", { name: "Guardar contraparte" }).click();
   await expect(page.getByText("Hola, ya vi la operación.")).toBeVisible();
   await page.getByPlaceholder("Escribe un mensaje").fill("Hola, ya inicié el pago");
   await page.getByRole("button", { name: "Enviar", exact: true }).click();
   await expect(page.getByText("Hola, ya inicié el pago")).toBeVisible();
+  await page.getByRole("dialog", { name: "Chat de la operación" }).getByRole("button", { name: "Cerrar chat" }).click();
 
   let lifecycleStep = "ready_for_fiat";
   await page.route("**/api/trades/11111111-1111-4111-8111-111111111111/messages**", async (route) => {
@@ -56,7 +60,7 @@ test("buyer can take a COP sell order and guard fiat sent", async ({ page }) => 
       body: JSON.stringify({ ok: true, data: { message: "**Pago fiat notificado**\n\nMostro recibió la confirmación." } })
     });
   });
-  await page.getByRole("button", { name: "Actualizar mensajes" }).click();
+  await page.getByRole("button", { name: "Actualizar estado" }).click();
 
   const fiatButton = page.getByRole("button", { name: "Marcar fiat como enviado" });
   await expect(fiatButton).toBeDisabled();
@@ -66,12 +70,15 @@ test("buyer can take a COP sell order and guard fiat sent", async ({ page }) => 
   await expect(page.getByText("Pago fiat ya notificado", { exact: true })).toBeVisible();
   await expect(fiatButton).toHaveCount(0);
 
+  await expect(page.getByRole("radio", { name: "5 estrellas" })).toHaveCount(0);
+  lifecycleStep = "completed";
+  await page.getByRole("button", { name: "Actualizar estado" }).click();
   await page.getByRole("radio", { name: "5 estrellas" }).click();
   await Promise.all([
     page.waitForResponse((response) => response.url().includes(`/api/trades/11111111-1111-4111-8111-111111111111/rate`) && response.request().method() === "POST"),
     page.getByRole("button", { name: "Enviar calificación" }).click()
   ]);
-  await expect(page.getByText("Calificación enviada", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("Calificación enviada", { exact: true }).last()).toBeVisible({ timeout: 15_000 });
 });
 
 test("market keeps COP internal and switches between buying and selling", async ({ page }) => {
@@ -188,15 +195,19 @@ test("creates buy and sell maker orders without paying from the app", async ({ p
 
   await page.getByPlaceholder("100.000").fill("150.000");
   await expect(page.getByPlaceholder("100.000")).toHaveValue("150.000");
+  await page.getByRole("button", { name: "Continuar", exact: true }).click();
   await page.getByPlaceholder("Nequi, Bancolombia").fill("Nequi, Bancolombia");
+  await page.getByRole("button", { name: "Revisar oferta", exact: true }).click();
   await page.getByLabel("Confirmo que quiero publicar esta orden en Mostro.").check();
   await page.getByRole("button", { name: "Publicar orden" }).click();
 
   await expect(page.getByRole("heading", { name: "Orden creada" })).toBeVisible();
   await expect(page.getByText("33333333-3333-4333-8333-333333333333")).toBeVisible();
   await expect(page.getByLabel("Hold invoice")).toHaveCount(0);
-  await page.getByRole("link", { name: "Ver mi orden" }).click();
-  await expect(page).toHaveURL(/\/my-orders\/33333333-3333-4333-8333-333333333333$/);
+  await Promise.all([
+    page.waitForURL(/\/my-orders\/33333333-3333-4333-8333-333333333333$/, { timeout: 15_000 }),
+    page.getByRole("link", { name: "Ver mi orden" }).click()
+  ]);
   await expect(page.getByRole("heading", { name: "Compra de Bitcoin" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Marcar fiat como enviado" })).toBeDisabled();
 
@@ -204,7 +215,9 @@ test("creates buy and sell maker orders without paying from the app", async ({ p
   await page.getByRole("button", { name: "Vender BTC" }).click();
   await page.getByPlaceholder("100.000").fill("200.000");
   await expect(page.getByPlaceholder("100.000")).toHaveValue("200.000");
+  await page.getByRole("button", { name: "Continuar", exact: true }).click();
   await page.getByPlaceholder("Nequi, Bancolombia").fill("Nequi");
+  await page.getByRole("button", { name: "Revisar oferta", exact: true }).click();
   await page.getByLabel("Confirmo que quiero publicar esta orden en Mostro.").check();
   await page.getByRole("button", { name: "Publicar orden" }).click();
 

@@ -137,7 +137,7 @@ ${invoice}`;
 
     expect(parseCliTradeEvents(output)).toEqual([
       { action: "PayBondInvoice", timestamp: "2026-09-03 18:40:37", orderId: undefined, invoice },
-      { action: "AddInvoice", timestamp: "2026-09-03 18:41:00", orderId: "11111111-1111-4111-8111-111111111111", invoice: undefined }
+      { action: "AddInvoice", timestamp: "2026-09-03 18:41:00", orderId: "11111111-1111-4111-8111-111111111111", invoice: undefined, sats: 100000 }
     ]);
   });
 

@@ -253,6 +253,8 @@ export interface CliTradeEvent {
   invoice?: string;
   orderId?: string;
   timestamp?: string;
+  status?: string;
+  sats?: number;
 }
 
 export function parseCliTradeEvents(raw: string): CliTradeEvent[] {
@@ -262,11 +264,15 @@ export function parseCliTradeEvents(raw: string): CliTradeEvent[] {
     if (!/📄\s+Message\s+\d+\s*:/i.test(block)) return [];
     const action = block.match(/Action:\s*[^\r\n]*?([A-Z][A-Za-z]+)\s*$/im)?.[1];
     const timestamp = block.match(/Time:\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/i)?.[1];
+    const status = block.match(/Status:\s*([A-Za-z_-]+)/i)?.[1];
+    const sats = parseNumber(block.match(/\b([\d,]+)\s+sats\b/i)?.[1]);
     return [{
       action,
       timestamp,
       orderId: block.match(uuidPattern)?.[0],
-      invoice: block.match(lightningInvoicePattern)?.[0]
+      invoice: block.match(lightningInvoicePattern)?.[0],
+      ...(status ? { status } : {}),
+      ...(sats !== undefined ? { sats } : {})
     }];
   });
 }

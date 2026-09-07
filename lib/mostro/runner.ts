@@ -20,7 +20,7 @@ function createSafeEnv(): NodeJS.ProcessEnv {
     LC_ALL: process.env.LC_ALL
   };
 
-  for (const key of ["MOSTRO_PUBKEY", "RELAYS", "POW"]) {
+  for (const key of ["MOSTRO_PUBKEY", "RELAYS", "POW", "TRANSPORT"]) {
     if (process.env[key]) env[key] = process.env[key];
   }
 
@@ -121,6 +121,42 @@ class MockMostroCliRunner implements MostroCliRunner {
     const createdOrderId = kind === "buy"
       ? "33333333-3333-4333-8333-333333333333"
       : "44444444-4444-4444-8444-444444444444";
+    if (command === "api") {
+      const apiCommand = args[1];
+      const dataByCommand: Record<string, unknown> = {
+        capabilities: {
+          api_version: 1,
+          cli_version: "0.16.1",
+          features: ["fiat-sent", "restore-persist", "trade-status"]
+        },
+        "trade-status": {
+          order_id: orderId,
+          status: "active",
+          kind: listedKind,
+          fiat_code: "COP",
+          is_mine: true,
+          restored_stub: false
+        },
+        "fiat-sent": {
+          action: "fiat-sent",
+          acknowledged_action: "fiat-sent-ok",
+          already_acknowledged: false,
+          order_id: orderId,
+          status: "fiat-sent"
+        },
+        restore: {
+          persisted: { orders: 1, disputes: 0 },
+          orders: [{ order_id: orderId, trade_index: 1, status: "active" }],
+          disputes: []
+        }
+      };
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify({ schema_version: 1, ok: true, data: dataByCommand[apiCommand] }),
+        stderr: "",
+        durationMs: 5
+      };
+    }
     const stdoutByCommand: Record<string, string> = {
       "--version": "mostro-cli 0.16.1\n",
       listorders: JSON.stringify([{

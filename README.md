@@ -22,6 +22,7 @@ Mostrico es una capa local para explorar el mercado de Mostro, tomar ofertas, pu
 - Tomar ofertas como comprador o vendedor con confirmaciones explícitas.
 - Resolver la garantía anti-abuso cuando Mostro la exige.
 - Agregar invoices Lightning, confirmar fiat, liberar sats, calificar y abrir disputa.
+- Restaurar operaciones y disputas activas desde la identidad de `mostro-cli`.
 - Publicar órdenes maker de compra o venta desde `/orders/new`.
 - Chatear con la contraparte usando el transporte kind 14 actual de Mostro Mobile.
 - Trabajar con un modo mock para pruebas locales y E2E sin tocar una instancia real.
@@ -54,6 +55,7 @@ Edita `.env.local`:
 ```env
 MOSTRO_PUBKEY=<npub o hex público de la instancia Mostro>
 RELAYS=wss://relay.example,wss://another.example
+# TRANSPORT=gift-wrap
 ```
 
 Si `mostro-cli` no está en `PATH`, define:
@@ -63,6 +65,32 @@ MOSTRO_CLI_PATH=/ruta/a/mostro-cli
 ```
 
 El chat usa por defecto el endpoint push oficial de Mostro Mobile. Puede cambiarse con `MOSTRO_PUSH_SERVER_URL`; la ruta de la base local también puede ajustarse con `MOSTRO_CLI_DB_PATH`.
+
+### Fork de integración
+
+Mostrico conserva compatibilidad básica con el CLI oficial. Para confirmar fiat mediante una respuesta `FiatSentOk` verificable y restaurar operaciones activas, compila el fork que incluye la API JSON v1:
+
+```bash
+cd /ruta/al/fork/mostro-cli
+cargo build --release
+./target/release/mostro-cli api capabilities
+```
+
+Después apunta Mostrico al binario compilado:
+
+```env
+MOSTRO_CLI_PATH=/ruta/al/fork/mostro-cli/target/release/mostro-cli
+```
+
+La página `/setup` muestra la versión y capacidades detectadas. El fork expone `api fiat-sent`, `api trade-status` y `api restore` sin incluir claves privadas en el JSON. Si el CLI no anuncia el API, Mostrico mantiene los comandos humanos existentes, salvo la restauración desde la interfaz, que requiere `restore-persist`.
+
+## Cobro pendiente e invoice vencida
+
+La liberación del vendedor (`SettledHoldInvoice`) no equivale al pago a la wallet del comprador. Si Mostro no logra pagar y solicita `AddInvoice` en ese estado, el último paso del trade permite reemplazar la invoice usando el monto neto indicado por el nodo. No hay que repetir el pago fiat ni la liberación.
+
+El fork debe incluir el reconocimiento de `InvoiceUpdated` y los IDs de orden en `getdm`. Tras actualizar la invoice, Mostrico espera `PurchaseCompleted` o un estado `Success` verificado; no muestra la operación como completada antes. La recuperación también está enlazada desde las órdenes propias. No se guarda la invoice de cobro en el estado local.
+
+Al reabrir una operación, Mostrico consulta desde la última sincronización, hasta siete días de historial, y conserva el cobro pendiente entre recargas.
 
 ## Desarrollo
 
@@ -84,6 +112,7 @@ Los tests E2E usan `MOSTRO_WEB_MOCK_CLI=1` y levantan la app en `127.0.0.1:3100`
 - Respalda tu identidad de Mostro CLI siguiendo la documentación oficial.
 - Verifica las instrucciones de pago fuera de la app antes de transferir fiat.
 - `fiatsent` solo declara ante Mostro que ya pagaste; no ejecuta una transferencia bancaria.
+- Con el fork de integración, Mostrico solo muestra la confirmación de fiat después de recibir un `FiatSentOk` válido para la misma operación.
 - El chat viaja cifrado con el protocolo actual de Mostro (ECDH, claves `K_conv`/`K_sign`, NIP-44 y eventos kind 14). Mostrico guarda localmente, en texto plano y con permisos `0600`, hasta 200 mensajes por operación para reconstruir la conversación.
 
 ## Comandos útiles
