@@ -90,6 +90,9 @@
 .offerMain { min-height: 99px; padding-block: 20px; }
 .offerMain > div { min-width: 0; }
 .offerIdentity { display: flex; align-items: center; gap: 10px; }
+.offerIdentity > div { min-width: 0; }
+.offerFooter { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 12px; padding: 0 18px 12px 60px; }
+.offerDate { grid-area: 1 / 2; align-self: start; display: flex; align-items: center; justify-content: flex-end; min-height: 32px; gap: 5px; color: #98a19d; font-size: 10px; line-height: 1.6; text-align: right; overflow-wrap: anywhere; }
 .offerSymbol { display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%; color: var(--market-accent); background: #293127; }
 .market[data-intent="sell"] .offerSymbol { background: #233333; }
 .offerType { display: block; color: #d8dfd9; font-size: 11px; }
@@ -116,8 +119,8 @@
 .bookmarkButton:hover { color: var(--market-accent); background: #30382d; }
 .offerLink { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; padding: 0 10px; border: 1px solid #48543c; border-radius: 5px; font-size: 11px; font-weight: 550; color: var(--market-accent); white-space: nowrap; transition: color 150ms, background 150ms, border-color 150ms; }
 .offerLink:hover { background: var(--market-accent); color: #152211; border-color: var(--market-accent); }
-.conditions { padding: 0 18px 13px 60px; margin-top: -9px; }
-.conditions > summary { display: flex; align-items: center; gap: 5px; list-style: none; width: fit-content; max-width: 100%; font-size: 10px; color: #9faea0; cursor: pointer; min-height: 24px; }
+.conditions { grid-area: 1 / 1 / 2 / 3; min-width: 0; }
+.conditions > summary { display: flex; align-items: center; gap: 5px; list-style: none; width: calc((100% - 12px) / 2); font-size: 10px; line-height: 1.6; color: #9faea0; cursor: pointer; min-height: 32px; }
 .conditions > summary::-webkit-details-marker { display: none; }
 .conditions > summary:focus-visible { outline: 2px solid var(--market-accent); outline-offset: 3px; }
 .conditions[open] > summary svg { transform: rotate(180deg); }
@@ -146,7 +149,7 @@
   .offerLink { gap: 5px; padding-inline: 8px; }
   .offerActions { gap: 3px; }
   .bookmarkButton { width: 23px; }
-  .conditions { padding-left: 14px; }
+  .offerFooter { padding-left: 14px; }
   .filters { gap: 12px; }
   .stat { padding-left: 20px; }
 }
@@ -182,6 +185,7 @@
   .offerSymbol { display: grid; width: 30px; height: 30px; }
   .offerIdentity > div { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
   .orderId { margin-top: 0; }
+  .offerFooter { padding-inline: 16px; }
   .offerAmount { grid-column: 1; }
   .offerAmount > strong { font-size: 18px; line-height: 1.5; }
   .offerPremium { align-self: start; text-align: right; }
@@ -193,8 +197,6 @@
   .offerActions { grid-column: 2; align-self: end; }
   .offerLink { min-height: 42px; width: 100%; }
   .bookmarkButton { position: absolute; top: 12px; right: 12px; height: 42px; width: 36px; }
-  .conditions { margin-top: -3px; padding: 0 16px 14px; }
-  .conditions > summary { min-height: 30px; }
   .paymentTags { gap: 6px; }
   .paymentTags > span { font-size: 10px; padding: 5px 6px; }
   .skeletonRow { grid-template-columns: 1.5fr 0.7fr; gap: 25px; min-height: 170px; }
@@ -226,7 +228,7 @@
   .offerAmount > strong { font-size: 16px; }
   .offerPremium > strong { font-size: 15px; }
   .offerLink { font-size: 10px; padding-inline: 6px; }
-  .conditions { padding-inline: 12px; }
+  .offerFooter { padding-inline: 12px; }
   .bookFooter { font-size: 9px; gap: 12px; }
   .bookFooter > span:last-child { display: none; }
 }

@@ -16,6 +16,21 @@ async function mockMarket(page: Page) {
 }
 const rows = (page: Page) => page.getByRole("list", { name: "Lista de ofertas" }).getByRole("listitem");
 
+test("shows publication dates in Colombia time and never substitutes refresh time", async ({ page }) => {
+  await page.route("**/api/orders?**", (route) => route.fulfill({ json: { ok: true, data: [
+    offers[0], { ...offers[1], createdAt: undefined, listedAt: "2026-09-07T12:00:00Z" },
+    { ...offers[2], createdAt: "invalid" }
+  ] } }));
+  await page.goto("/market");
+  const date = rows(page).first().locator("time");
+  await expect(date).toHaveAttribute("datetime", "2026-09-04T15:00:00.000Z");
+  await expect(date).toContainText(/04.*sep.*2026.*10:00/);
+  await expect(date).toHaveAttribute("title", /hora de Colombia, UTC-5/);
+  await expect(page.getByText("Fecha no disponible", { exact: true })).toHaveCount(2);
+  await page.getByRole("button", { name: "Refrescar", exact: true }).click();
+  await expect(date).toHaveAttribute("datetime", "2026-09-04T15:00:00.000Z");
+});
+
 test("filters formatted amounts and payment methods, sorts and resets", async ({ page }) => {
   await mockMarket(page);
   await page.goto("/market");
@@ -34,6 +49,10 @@ test("filters formatted amounts and payment methods, sorts and resets", async ({
   await page.getByLabel("Ordenar por").selectOption("newest");
   await expect(rows(page).first()).toContainText("#55555555");
   await expect(rows(page).first()).toContainText("100.000.000");
+  await page.getByLabel("Ordenar por").selectOption({ label: "Más antiguas" });
+  await expect(rows(page).first()).toContainText("#11111111");
+  await expect(rows(page).last()).toContainText("#55555555");
+  await page.getByLabel("Ordenar por").selectOption({ label: "Más recientes" });
   await page.getByLabel("Quiero comprar por").fill("1");
   await expect(page.getByRole("heading", { name: "No hay ofertas con estos filtros" })).toBeVisible();
   await page.getByRole("button", { name: "Borrar monto" }).click();
@@ -106,6 +125,12 @@ test("renders readable offers and expanded conditions across screen sizes", asyn
       const main = row.firstElementChild!;
       const children = [...main.children].map((element) => element.getBoundingClientRect());
       const overlaps: string[] = [];
+      const date = row.querySelector("time")!.getBoundingClientRect();
+      const bounds = row.getBoundingClientRect();
+      if (date.top < main.getBoundingClientRect().bottom || bounds.right - date.right > 19 || bounds.bottom - date.bottom > 22) overlaps.push("date is not at bottom right");
+      const summary = row.querySelector("summary")?.getBoundingClientRect();
+      const dateRow = row.querySelector("time")!.parentElement!.getBoundingClientRect();
+      if (summary && (Math.abs(summary.top + summary.height / 2 - dateRow.top - dateRow.height / 2) > 1 || summary.right > dateRow.left)) overlaps.push("date is not aligned with conditions");
       for (let i = 0; i < children.length; i++) for (let j = i + 1; j < children.length; j++) {
         const a = children[i], b = children[j];
         if (Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1) overlaps.push(`${i}:${j}`);
@@ -116,6 +141,12 @@ test("renders readable offers and expanded conditions across screen sizes", asyn
   }
   await page.getByText("Condiciones del anunciante", { exact: true }).click();
   await expect(page.locator("details[open] p")).toHaveText(conditions.trim());
+  const expanded = rows(page).filter({ has: page.locator("details[open]") });
+  expect(await expanded.evaluate((row) => {
+    const summary = row.querySelector("summary")!.getBoundingClientRect();
+    const date = row.querySelector("time")!.parentElement!.getBoundingClientRect();
+    return Math.abs(summary.top + summary.height / 2 - date.top - date.height / 2) <= 1 && date.bottom <= row.querySelector("details p")!.getBoundingClientRect().top;
+  })).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("market-conditions-mobile.png"), fullPage: true });
   expect(errors).toEqual([]);

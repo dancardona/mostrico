@@ -2,7 +2,7 @@ import { normalizeFiatInput } from "@/lib/format";
 import type { MostroOrder } from "@/lib/mostro/types";
 
 export type MarketIntent = "buy" | "sell";
-export type MarketSort = "premium" | "amount" | "newest";
+export type MarketSort = "premium" | "amount" | "newest" | "oldest";
 
 const paymentMethods = [
   { label: "Nequi", pattern: /\bnequi\b/i },
@@ -33,12 +33,27 @@ export function fiatBounds(order: MostroOrder) {
   return { min: fixed ?? positiveAmount(order.minFiatAmount), max: fixed ?? positiveAmount(order.maxFiatAmount) };
 }
 
-function createdTime(order: MostroOrder) {
-  const value = order.createdAt ?? order.listedAt;
-  if (!value) return 0;
+function parseOfferDate(value?: string) {
+  if (!value?.trim()) return undefined;
+  value = value.trim();
   const utc = /^\d{4}-\d\d-\d\d \d\d:\d\d(?::\d\d)?$/.test(value) ? `${value.replace(" ", "T")}Z` : value;
   const parsed = Date.parse(utc);
-  return Number.isFinite(parsed) ? parsed : 0;
+  return Number.isFinite(parsed) ? new Date(parsed) : undefined;
+}
+
+export function marketOfferDate(order: MostroOrder) {
+  // listedAt is our cache timestamp, not the publication time reported by Mostro.
+  const date = parseOfferDate(order.createdAt);
+  if (!date) return undefined;
+  const label = new Intl.DateTimeFormat("es-CO", {
+    timeZone: "America/Bogota", day: "2-digit", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+  }).format(date);
+  return { dateTime: date.toISOString(), label, title: `Publicada: ${label} (hora de Colombia, UTC-5)` };
+}
+
+function createdTime(order: MostroOrder) {
+  return parseOfferDate(order.createdAt ?? order.listedAt)?.getTime() ?? 0;
 }
 
 export function selectMarketOrders(orders: MostroOrder[], filters: {
@@ -61,7 +76,15 @@ export function selectMarketOrders(orders: MostroOrder[], filters: {
     }
     return true;
   }).sort((left, right) => {
-    if (filters.sort === "newest") return createdTime(right) - createdTime(left) || left.id.localeCompare(right.id);
+    if (filters.sort === "newest" || filters.sort === "oldest") {
+      const leftTime = parseOfferDate(left.createdAt)?.getTime();
+      const rightTime = parseOfferDate(right.createdAt)?.getTime();
+      if (leftTime === undefined || rightTime === undefined) {
+        return leftTime !== undefined ? -1 : rightTime !== undefined ? 1 : left.id.localeCompare(right.id);
+      }
+      const direction = filters.sort === "oldest" ? 1 : -1;
+      return direction * (leftTime - rightTime) || left.id.localeCompare(right.id);
+    }
     const leftValue = filters.sort === "amount" ? fiatBounds(left).min : left.premiumPct;
     const rightValue = filters.sort === "amount" ? fiatBounds(right).min : right.premiumPct;
     const leftKnown = leftValue !== undefined && Number.isFinite(leftValue);

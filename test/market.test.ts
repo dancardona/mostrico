@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fiatBounds, marketPaymentMethods, selectMarketOrders } from "@/lib/market";
+import { fiatBounds, marketOfferDate, marketPaymentMethods, selectMarketOrders } from "@/lib/market";
 import type { MostroOrder } from "@/lib/mostro/types";
 
 const order = (id: string, fields: Partial<MostroOrder> = {}): MostroOrder => ({
@@ -10,6 +10,21 @@ const select = (orders: MostroOrder[], overrides: Partial<Parameters<typeof sele
   selectMarketOrders(orders, { ...defaults, savedIds: [], ...overrides }).map(({ id }) => id);
 
 describe("market filters", () => {
+  it("shows CLI UTC and ISO timestamps in Colombia time, including the previous day", () => {
+    const date = marketOfferDate(order("a", { createdAt: "2026-09-04 02:05" }));
+    expect(date?.dateTime).toBe("2026-09-04T02:05:00.000Z");
+    expect(date?.label).toMatch(/03.*sep.*2026.*21:05/);
+    expect(date?.title).toContain("hora de Colombia, UTC-5");
+    expect(marketOfferDate(order("a", { createdAt: "2026-09-03T21:05:00-05:00" }))).toEqual(date);
+    expect(marketOfferDate(order("a", { createdAt: "2026-09-04 02:05:00" }))).toEqual(date);
+  });
+
+  it("does not substitute the local cache date for missing or invalid publication dates", () => {
+    for (const createdAt of [undefined, "", "invalid"]) {
+      expect(marketOfferDate(order("a", { createdAt, listedAt: "2026-09-04T15:00:00Z" }))).toBeUndefined();
+    }
+  });
+
   it("groups known payment methods without changing the original conditions", () => {
     const item = order("a", { paymentMethods: ["Nequi / Bancolombia. Solo desde cuenta propia.", "NEQUI", "Bre-B", "Daviplata y PSE", "Transferencia bancaria", "Efectivo"] });
     expect(marketPaymentMethods(item)).toEqual(["Nequi", "Bancolombia", "Llaves BRE-B", "Daviplata", "PSE", "Transferencia bancaria", "Efectivo"]);
@@ -56,6 +71,20 @@ describe("market filters", () => {
   it("sorts minima and dates from both CLI and ISO formats", () => {
     const items = [order("older", { minFiatAmount: "20000", createdAt: "2026-09-04 13:00" }), order("newer", { createdAt: "2026-09-04T14:00:00Z" }), order("unknown", { minFiatAmount: undefined, createdAt: "invalid" })];
     expect(select(items, { sort: "newest" })).toEqual(["newer", "older", "unknown"]);
+    expect(select(items, { sort: "oldest" })).toEqual(["older", "newer", "unknown"]);
     expect(select(items, { sort: "amount" })).toEqual(["newer", "older", "unknown"]);
+  });
+
+  it("keeps unknown publication dates last in both directions and resolves equal dates by ID", () => {
+    const items = [
+      order("missing", { listedAt: "2026-09-07T12:00:00Z" }),
+      order("b", { createdAt: "2026-09-04 13:00" }),
+      order("invalid", { createdAt: "invalid" }),
+      order("a", { createdAt: "2026-09-04T08:00:00-05:00" })
+    ];
+    for (const sort of ["newest", "oldest"] as const) {
+      expect(select(items, { sort })).toEqual(["a", "b", "invalid", "missing"]);
+      expect(select(items.map((item) => ({ ...item, kind: "buy" })), { intent: "sell", sort })).toEqual(["a", "b", "invalid", "missing"]);
+    }
   });
 });

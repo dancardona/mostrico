@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowDownLeft, ArrowUpRight, ArrowUpDown, Bitcoin, Bookmark, ChevronDown, FilterX, Globe2, Landmark, LoaderCircle, Plus, RefreshCw, Search, SlidersHorizontal, WifiOff, X, Zap } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, ArrowUpDown, Bitcoin, Bookmark, ChevronDown, Clock3, FilterX, Globe2, Landmark, LoaderCircle, Plus, RefreshCw, Search, SlidersHorizontal, WifiOff, X, Zap } from "lucide-react";
 import { AmountInput, PageHeader } from "@/components/ui";
 import { formatNumber, formatPercentage } from "@/lib/format";
-import { fiatBounds, marketPaymentMethods, selectMarketOrders, type MarketIntent, type MarketSort } from "@/lib/market";
+import { fiatBounds, marketOfferDate, marketPaymentMethods, selectMarketOrders, type MarketIntent, type MarketSort } from "@/lib/market";
 import type { MostroOrder } from "@/lib/mostro/types";
 import styles from "./market.module.css";
 
@@ -148,7 +148,7 @@ export default function MarketPage() {
           </div>
           <div id="market-sort-field" className={`${styles.filterField} ${styles.advancedFilter}`}>
             <label htmlFor="market-sort">Ordenar por</label>
-            <div className={styles.selectField}><ArrowUpDown size={16} aria-hidden="true" /><select id="market-sort" value={sort} onChange={(event) => setSort(event.target.value as MarketSort)}><option value="premium">{intent === "buy" ? "Menor premium" : "Mayor premium"}</option><option value="amount">Menor monto</option><option value="newest">Más recientes</option></select><ChevronDown size={15} aria-hidden="true" /></div>
+            <div className={styles.selectField}><ArrowUpDown size={16} aria-hidden="true" /><select id="market-sort" value={sort} onChange={(event) => setSort(event.target.value as MarketSort)}><option value="premium">{intent === "buy" ? "Menor premium" : "Mayor premium"}</option><option value="amount">Menor monto</option><option value="newest">Más recientes</option><option value="oldest">Más antiguas</option></select><ChevronDown size={15} aria-hidden="true" /></div>
           </div>
           <button type="button" id="market-saved" className={`${styles.savedFilter} ${styles.advancedFilter}`} aria-pressed={savedOnly} onClick={() => setSavedOnly(!savedOnly)}><Bookmark size={16} fill={savedOnly ? "currentColor" : "none"} /> Guardadas <span>{formatNumber(savedCount, 0)}</span></button>
         </div>
@@ -184,6 +184,7 @@ export default function MarketPage() {
 
 function OfferRow({ order, intent, saved, onSave }: { order: MostroOrder; intent: MarketIntent; saved: boolean; onSave: () => void }) {
   const methods = marketPaymentMethods(order);
+  const published = marketOfferDate(order);
   const premiumKnown = order.premiumPct !== undefined && Number.isFinite(order.premiumPct);
   const favorable = premiumKnown && (intent === "buy" ? order.premiumPct! <= 0 : order.premiumPct! >= 0);
   const { min, max } = fiatBounds(order);
@@ -209,7 +210,10 @@ function OfferRow({ order, intent, saved, onSave }: { order: MostroOrder; intent
           <Link href={`/orders/${order.id}`} className={styles.offerLink}>Ver oferta <ArrowUpRight size={16} /></Link>
         </div>
       </div>
-      {hasConditions && <details className={styles.conditions}><summary><ChevronDown size={13} /> Condiciones del anunciante</summary><p>{rawMethods || "El anunciante no especificó un método de pago."}</p><span className={styles.fullId}>ID: {order.id}</span></details>}
+      <div className={styles.offerFooter}>
+        {hasConditions && <details className={styles.conditions}><summary><ChevronDown size={13} /> Condiciones del anunciante</summary><p>{rawMethods || "El anunciante no especificó un método de pago."}</p><span className={styles.fullId}>ID: {order.id}</span></details>}
+        <div className={styles.offerDate}><Clock3 size={12} aria-hidden="true" />{published ? <time dateTime={published.dateTime} title={published.title} aria-label={published.title}>{published.label}</time> : <span>Fecha no disponible</span>}</div>
+      </div>
     </li>
   );
 }
